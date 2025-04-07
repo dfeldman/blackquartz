@@ -35,8 +35,17 @@
       </div>
     </div>
   </div>
-</control-group>
 
+</control-group>
+editor <shape-editor 
+:shape="theme.backgrounds.body.shape"
+:color-mode="editorState.colorMode"
+@update:shape="(shape) => {
+  // Update the shape in the theme
+  theme.backgrounds.body.shape = shape;
+  $emit('open-background', 'body'); // Re-trigger background update
+}"
+></shape-editor>
       <!-- Background Settings -->
       <control-group 
         title="Background" 
@@ -52,7 +61,7 @@
               :style="{ backgroundColor: getCurrentColor(theme.backgrounds.body.overlay.color), opacity: theme.backgrounds.body.overlay.opacity }"></div>
         </div>
       </control-group>
-      
+
       <!-- Page Settings -->
       <control-group 
         title="Page" 
@@ -329,6 +338,7 @@
   import { getBackgroundStyle } from '../services/CSSStyleGenerator';
   import ThemeUtils from '../services/ThemeUtils';
   import FontInput from './controls/FontInput.vue';
+  import ShapeEditor from './editors/ShapeEditor.vue';
   export default {
     name: 'DesignControls',
     components: {
@@ -337,7 +347,8 @@
       CheckboxInput,
       ThemedColorInput,
       SegmentedControl,
-        FontInput
+        FontInput,
+        ShapeEditor
     },
     props: {
       theme: { type: Object, required: true },

@@ -12,13 +12,13 @@
       </div>
       <div class="font-details">
         <div class="font-name">{{ displayFontName }}</div>
-        <div class="font-size">{{ fontConfig.size }}px • {{ weightLabel }}</div>
+        <div class="font-size">{{ fontConfig.size }}pt • {{ safeWeightLabel }}</div>
       </div>
     </div>
     
     <!-- Font Panel Popup -->
     <div 
-      v-if="panelOpen" 
+      v-if="panelOpen && tempConfig" 
       class="font-panel-popup" 
       :style="popupStyle"
       ref="fontPanel"
@@ -38,14 +38,19 @@
             placeholder="Search fonts..."
             class="search-input"
           >
-          <div v-if="isLoading" class="loading-indicator">
-            <span class="loading-spinner"></span>
-          </div>
         </div>
         
         <!-- Font Preview -->
-        <div class="font-preview-area" :style="previewAreaStyle">
-          <div class="preview-text">Sphinx of black quartz, judge my vow</div>
+        <div class="font-preview-area">
+          <div 
+            class="preview-text" 
+            :style="getPreviewStyle()"
+            ref="previewText"
+          >
+            Sphinx of black quartz, judge my vow
+          
+            Sphinx of black quartz, judge my vow
+          </div>
         </div>
         
         <!-- Size and Weight Controls -->
@@ -56,30 +61,61 @@
               <input 
                 type="range" 
                 v-model.number="tempConfig.size" 
-                min="8" 
+                min="6" 
                 max="72" 
                 step="1"
                 class="slider"
               >
-              <div class="slider-value">{{ tempConfig.size }}px</div>
+              <div class="slider-value">{{ tempConfig.size }}pt</div>
             </div>
           </div>
           
+          <!-- Weight Control (always slider) -->
           <div class="control-group">
             <label>Weight</label>
             <div class="slider-container">
               <input 
                 type="range" 
                 v-model.number="tempConfig.weight" 
-                min="100" 
-                max="900" 
-                step="100"
+                :min="getAxisMin('wght')" 
+                :max="getAxisMax('wght')" 
+                :step="selectedFontInfo && selectedFontInfo.isVariable ? 1 : getWeightStep()"
                 class="slider"
-                :disabled="!currentFontSupportsWeights"
+                :list="selectedFontInfo && !selectedFontInfo.isVariable ? 'weight-datalist' : null"
               >
-              <div class="slider-value">{{ weightLabel }}</div>
+              <datalist v-if="selectedFontInfo && !selectedFontInfo.isVariable" id="weight-datalist">
+                <option 
+                  v-for="weight in availableWeights" 
+                  :key="weight" 
+                  :value="parseInt(weight)"
+                ></option>
+              </datalist>
+              <div class="slider-value">{{ safeWeightLabel }}</div>
             </div>
           </div>
+          
+          <!-- Additional Axes Controls (if available) -->
+          <template v-for="axis in additionalAxes" :key="axis.tag">
+            <div class="control-group">
+              <label>{{ axis.tag === 'wdth' ? 'Width' : 
+                        axis.tag === 'slnt' ? 'Slant' : 
+                        axis.tag === 'ital' ? 'Italic' : 
+                        axis.tag === 'opsz' ? 'Optical Size' : 
+                        axis.tag.toUpperCase() }}</label>
+              <div class="slider-container">
+                <input 
+                  type="range" 
+                  :min="axis.start" 
+                  :max="axis.end" 
+                  step="1"
+                  class="slider"
+                  :value="tempConfig.axes[axis.tag]"
+                  @input="updateAxisValue(axis.tag, $event.target.value)"
+                >
+                <div class="slider-value">{{ tempConfig.axes[axis.tag] }}</div>
+              </div>
+            </div>
+          </template>
         </div>
         
         <!-- Font Effects -->
@@ -100,15 +136,7 @@
         
         <!-- Font List -->
         <div class="font-list-container">
-          <div v-if="apiError" class="api-error">
-            {{ apiError }}
-          </div>
-          
-          <div v-else-if="isLoading && fonts.length === 0" class="loading-message">
-            Loading fonts...
-          </div>
-          
-          <div v-else-if="fonts.length === 0 && searchTerm.length > 0" class="no-results">
+          <div v-if="fonts.length === 0 && searchTerm.length > 0" class="no-results">
             No fonts found matching "{{ searchTerm }}".
           </div>
           
@@ -119,9 +147,16 @@
               class="font-item" 
               :class="{ 'selected': tempConfig.family === font.family }"
               @click="selectFont(font)"
-              :style="{ fontFamily: `'${font.family}', ${font.category}` }"
             >
-              <div class="font-item-name">{{ font.family }}</div>
+              <div 
+                class="font-item-name" 
+                :style="{ 
+                  fontFamily: `'${font.family}', ${font.category}`,
+                  fontWeight: getFontPreviewWeight(font)
+                }"
+              >
+                {{ font.family }}
+              </div>
               <div class="font-item-category">{{ font.category }}</div>
             </div>
           </div>
@@ -137,12 +172,62 @@
 </template>
 
 <script>
-// Cache for Google Fonts data to avoid repeated API calls
-const fontsCache = {
-  popular: null,
-  all: null,
-  search: {},
-  lastFetched: 0
+import { reactive } from 'vue';
+import { FONTS } from '../../constants/fonts.js';
+
+// Font loader helper
+const fontLoader = {
+  loadedFonts: new Set(),
+  
+  // Load a specific font
+  load(fontFamily, weights = ["400"]) {
+    if (!fontFamily) return Promise.resolve();
+    
+    const key = `${fontFamily}:${weights.join(',')}`;
+    if (this.loadedFonts.has(key)) return Promise.resolve();
+    
+    return new Promise((resolve, reject) => {
+      // Check if WebFont is available
+      if (!window.WebFont) {
+        // Load the WebFont library if not available
+        const wf = document.createElement('script');
+        wf.src = 'https://ajax.googleapis.com/ajax/libs/webfont/1.6.26/webfont.js';
+        wf.async = true;
+        
+        wf.onload = () => {
+          this._loadWithWebFont(fontFamily, weights, resolve, reject);
+        };
+        
+        wf.onerror = () => {
+          reject(new Error('Failed to load WebFont loader'));
+        };
+        
+        document.head.appendChild(wf);
+      } else {
+        this._loadWithWebFont(fontFamily, weights, resolve, reject);
+      }
+    });
+  },
+  
+  // Internal method to load with WebFont
+  _loadWithWebFont(fontFamily, weights, resolve, reject) {
+    const weightsStr = weights.join(',');
+    const key = `${fontFamily}:${weightsStr}`;
+    
+    window.WebFont.load({
+      google: {
+        families: [`${fontFamily}:${weightsStr}`]
+      },
+      active: () => {
+        this.loadedFonts.add(key);
+        resolve();
+      },
+      inactive: () => {
+        reject(new Error(`Failed to load font: ${fontFamily}`));
+      },
+      timeout: 3000 // 3 seconds timeout
+    });
+  }
 };
 
 export default {
@@ -157,33 +242,11 @@ export default {
     return {
       panelOpen: false,
       searchTerm: '',
-      isLoading: false,
-      apiError: null,
       fonts: [],
-      
-      // Popular fonts to show as presets
-      popularFonts: [
-        { family: 'Roboto', category: 'sans-serif', variants: ['100', '300', '400', '500', '700', '900'] },
-        { family: 'Open Sans', category: 'sans-serif', variants: ['300', '400', '600', '700', '800'] },
-        { family: 'Lato', category: 'sans-serif', variants: ['100', '300', '400', '700', '900'] },
-        { family: 'Montserrat', category: 'sans-serif', variants: ['100', '200', '300', '400', '500', '600', '700', '800', '900'] },
-        { family: 'Merriweather', category: 'serif', variants: ['300', '400', '700', '900'] },
-        { family: 'Raleway', category: 'sans-serif', variants: ['100', '200', '300', '400', '500', '600', '700', '800', '900'] },
-        { family: 'Playfair Display', category: 'serif', variants: ['400', '500', '600', '700', '800', '900'] },
-        { family: 'Source Code Pro', category: 'monospace', variants: ['200', '300', '400', '500', '600', '700', '900'] },
-        { family: 'Poppins', category: 'sans-serif', variants: ['100', '200', '300', '400', '500', '600', '700', '800', '900'] },
-        { family: 'Nunito', category: 'sans-serif', variants: ['200', '300', '400', '500', '600', '700', '800', '900'] }
-      ],
+      allFonts: [],
       
       // Temporary configuration during editing
-      tempConfig: {
-        family: 'Roboto',
-        category: 'sans-serif',
-        size: 16,
-        weight: 400,
-        effect: 'none',
-        variants: ['100', '300', '400', '500', '700', '900']
-      },
+      tempConfig: null, // Will be initialized in mounted
       
       // Original configuration before editing
       originalConfig: {
@@ -192,12 +255,25 @@ export default {
         size: 16,
         weight: 400,
         effect: 'none',
-        variants: ['100', '300', '400', '500', '700', '900']
+        axes: {}
       },
       
       popupStyle: {
         top: '0px',
         left: '0px'
+      },
+      
+      // Weight labels
+      weightLabels: {
+        100: 'Thin',
+        200: 'Extra Light',
+        300: 'Light',
+        400: 'Regular',
+        500: 'Medium',
+        600: 'Semi Bold',
+        700: 'Bold',
+        800: 'Extra Bold',
+        900: 'Black'
       }
     };
   },
@@ -211,7 +287,7 @@ export default {
           size: this.modelValue.size || 16,
           weight: this.modelValue.weight || 400,
           effect: this.modelValue.effect || 'none',
-          variants: this.modelValue.variants || ['400']
+          axes: this.modelValue.axes || {}
         };
       } else if (typeof this.modelValue === 'string') {
         // Parse font string like "'Roboto', sans-serif"
@@ -225,7 +301,7 @@ export default {
           size: 16,
           weight: 400,
           effect: 'none',
-          variants: ['400']
+          axes: {}
         };
       }
       
@@ -235,7 +311,7 @@ export default {
         size: 16,
         weight: 400,
         effect: 'none',
-        variants: ['400']
+        axes: {}
       };
     },
     
@@ -248,56 +324,69 @@ export default {
     previewStyle() {
       return {
         fontFamily: `'${this.fontConfig.family}', ${this.fontConfig.category}`,
-        fontWeight: this.fontConfig.weight
+        fontWeight: this.fontConfig.weight,
+        fontVariationSettings: this.getVariationSettingsFromConfig(this.fontConfig)
       };
     },
     
-    // Style for the preview area in the popup
-    previewAreaStyle() {
-      return {
-        fontFamily: `'${this.tempConfig.family}', ${this.tempConfig.category}`,
-        fontWeight: this.tempConfig.weight,
-        textTransform: this.tempConfig.effect === 'uppercase' ? 'uppercase' : 'none',
-        fontVariantCaps: this.tempConfig.effect === 'small-caps' ? 'small-caps' : 'normal',
-        textDecoration: this.getTextDecoration(),
-        textShadow: this.getTextShadow(),
-        backgroundColor: this.tempConfig.effect === 'highlight' ? 'rgba(255, 255, 0, 0.3)' : 'transparent'
-      };
-    },
-    
-    // Label for font weight (Thin, Light, Regular, etc.)
-    weightLabel() {
-      const weightMap = {
-        100: 'Thin',
-        200: 'Extra Light',
-        300: 'Light',
-        400: 'Regular',
-        500: 'Medium',
-        600: 'Semi Bold',
-        700: 'Bold',
-        800: 'Extra Bold',
-        900: 'Black'
-      };
+    // Safe weight label that handles null tempConfig
+    safeWeightLabel() {
+      if (!this.tempConfig) {
+        return this.weightLabels[400] || 'Regular'; // Default when tempConfig is null
+      }
       
-      return weightMap[this.tempConfig.weight] || 'Regular';
+      const weight = this.tempConfig.weight;
+      return this.weightLabels[weight] || this.approximateWeightLabel(weight);
     },
     
-    // Check if the current font supports multiple weights
-    currentFontSupportsWeights() {
-      return this.tempConfig.variants && this.tempConfig.variants.length > 1;
+    // Get the currently selected font info
+    selectedFontInfo() {
+      if (!this.tempConfig) return null;
+      return FONTS[this.tempConfig.family] || null;
+    },
+    
+    // Available weights for the selected font (for non-variable fonts)
+    availableWeights() {
+      if (!this.selectedFontInfo) return ["400"];
+      return this.selectedFontInfo.weights || ["400"];
+    },
+    
+    // Additional axes for variable fonts (excluding weight)
+    additionalAxes() {
+      if (!this.selectedFontInfo || !this.selectedFontInfo.isVariable || !this.selectedFontInfo.axes) {
+        return [];
+      }
+      
+      return this.selectedFontInfo.axes.filter(axis => axis.tag !== 'wght');
     }
   },
   watch: {
     modelValue: {
       handler() {
-        this.initFromModelValue();
+        if (this.tempConfig) {
+          this.initFromModelValue();
+        }
       },
       immediate: true
     }
   },
+  // This component still needs both getVariationSettings and the direct CSS property approach
+  // because some browsers might not support all the direct CSS properties
   mounted() {
-    // Load the Google Fonts API
-    this.loadGoogleFontsAPI();
+    console.log('FontInput component mounted');
+    
+    // Initialize tempConfig immediately with proper reactivity
+    this.tempConfig = reactive({
+      family: this.fontConfig.family || 'Roboto',
+      category: this.fontConfig.category || 'sans-serif',
+      size: this.fontConfig.size || 16,
+      weight: this.fontConfig.weight || 400,
+      effect: this.fontConfig.effect || 'none',
+      axes: {}
+    });
+    
+    // Initialize all fonts from the FONTS object
+    this.initializeFonts();
     
     // Add click outside listener to close the panel
     document.addEventListener('mousedown', this.handleClickOutside);
@@ -307,7 +396,45 @@ export default {
     
     // Add scroll listener for all parent elements
     this.addScrollListeners();
+    
+    // Initialize WebFont loader
+    this.initWebFontLoader();
+    
+    // Initialize from model value
+    this.initFromModelValue();
+    
+    // Set up watcher for axes changes
+    this.$watch(
+      () => this.tempConfig.axes,
+      () => {
+        console.log('Axes changed:', this.tempConfig.axes);
+        
+        // Update the preview text element directly
+        this.$nextTick(() => {
+          if (this.$refs.previewText) {
+            const style = this.getPreviewStyle();
+            
+            // Apply direct CSS properties first
+            Object.entries(style).forEach(([prop, value]) => {
+              this.$refs.previewText.style[prop] = value;
+            });
+            
+            // As a fallback, also apply font-variation-settings for better browser compatibility
+            if (this.selectedFontInfo && this.selectedFontInfo.isVariable) {
+              const variationSettings = this.getVariationSettings();
+              if (variationSettings) {
+                this.$refs.previewText.style.fontVariationSettings = variationSettings;
+              }
+            }
+          }
+          
+          this.$forceUpdate();
+        });
+      },
+      { deep: true }
+    );
   },
+  
   beforeUnmount() {
     // Remove event listeners
     document.removeEventListener('mousedown', this.handleClickOutside);
@@ -315,30 +442,99 @@ export default {
     this.removeScrollListeners();
   },
   methods: {
+    // Initialize WebFont loader
+    initWebFontLoader() {
+      if (window.WebFont) return;
+      
+      // Load the WebFont library if not available
+      const wf = document.createElement('script');
+      wf.src = 'https://ajax.googleapis.com/ajax/libs/webfont/1.6.26/webfont.js';
+      wf.async = true;
+      document.head.appendChild(wf);
+    },
+    
+    // Initialize fonts from the FONTS object
+    initializeFonts() {
+      this.allFonts = Object.values(FONTS).map(font => ({
+        family: font.family,
+        category: font.category,
+        weights: font.weights || ["400"],
+        isVariable: font.isVariable || false,
+        axes: font.axes || []
+      }));
+      
+      // Set initial fonts list
+      this.fonts = [...this.allFonts];
+      
+      // Load current font
+      this.loadFont(this.fontConfig.family);
+    },
+    
     // Initialize component data from model value
     initFromModelValue() {
-      // Parse the model value and set the temp configuration
-      this.tempConfig = { ...this.fontConfig };
-      this.originalConfig = { ...this.fontConfig };
-      
-      // Ensure the font is loaded for preview
-      this.loadFont(this.tempConfig.family);
+      try {
+        if (!this.tempConfig) {
+          console.warn('tempConfig is null in initFromModelValue');
+          return;
+        }
+        
+        // Update individual properties instead of replacing the entire object
+        this.tempConfig.family = this.fontConfig.family || 'Roboto';
+        this.tempConfig.category = this.fontConfig.category || 'sans-serif';
+        this.tempConfig.size = this.fontConfig.size || 16;
+        this.tempConfig.weight = this.fontConfig.weight || 400;
+        this.tempConfig.effect = this.fontConfig.effect || 'none';
+        
+        // Important: create a new empty object for axes to avoid reactivity issues
+        this.tempConfig.axes = {};
+        
+        // Copy axes safely from fontConfig
+        if (this.fontConfig.axes) {
+          Object.entries(this.fontConfig.axes).forEach(([key, value]) => {
+            this.tempConfig.axes[key] = value;
+          });
+        }
+        
+        // Store original config (deep copy)
+        this.originalConfig = {
+          family: this.fontConfig.family || 'Roboto',
+          category: this.fontConfig.category || 'sans-serif',
+          size: this.fontConfig.size || 16,
+          weight: this.fontConfig.weight || 400,
+          effect: this.fontConfig.effect || 'none',
+          axes: {}
+        };
+        
+        // Copy axes to originalConfig
+        if (this.fontConfig.axes) {
+          Object.entries(this.fontConfig.axes).forEach(([key, value]) => {
+            this.originalConfig.axes[key] = value;
+          });
+        }
+        
+        // Ensure the font is loaded for preview
+        this.loadFont(this.tempConfig.family);
+      } catch (error) {
+        console.error('Error in initFromModelValue:', error);
+      }
     },
     
     // Open the font selection panel
     openPanel() {
+      if (!this.tempConfig) {
+        console.error('tempConfig is null in openPanel');
+        return;
+      }
+      
       this.initFromModelValue();
       this.searchTerm = '';
       this.calculatePopupPosition();
       
-      // Load popular fonts if no search term
-      this.fonts = [...this.popularFonts];
+      // Show only top fonts initially instead of all fonts
+      this.fonts = this.getTopFonts();
       
-      // Fetch all fonts if needed and if cache is old
-      const cacheAge = Date.now() - fontsCache.lastFetched;
-      if (!fontsCache.all || cacheAge > 24 * 60 * 60 * 1000) {
-        this.fetchAllFonts();
-      }
+      // Load fonts for the list
+      this.preloadListFonts();
       
       this.panelOpen = true;
       
@@ -348,13 +544,109 @@ export default {
       });
     },
     
+    // Get a curated list of top fonts (mix of sans-serif and serif)
+    getTopFonts() {
+      // Define a list of popular font families
+      const popularFamilies = [
+        'Roboto', 'Open Sans', 'Lato', 'Montserrat', 'Source Sans Pro',
+        'Merriweather', 'Playfair Display', 'Raleway', 'Poppins', 'Nunito',
+        'Roboto Condensed', 'Oswald', 'Inter', 'Noto Sans', 'Lora',
+        'PT Sans', 'Roboto Mono', 'Ubuntu', 'Fira Sans', 'Mukta'
+      ];
+      
+      // Filter the allFonts array to include only fonts from the popularFamilies list
+      // If a font in popularFamilies doesn't exist in allFonts, it will be skipped
+      const topFonts = this.allFonts.filter(font => 
+        popularFamilies.includes(font.family)
+      );
+      
+      // Sort the top fonts according to the order in popularFamilies
+      topFonts.sort((a, b) => {
+        const indexA = popularFamilies.indexOf(a.family);
+        const indexB = popularFamilies.indexOf(b.family);
+        return indexA - indexB;
+      });
+      
+      // Limit to 20 fonts (though the list should already be curated)
+      return topFonts.slice(0, 20);
+    },
+    
+    // Preload fonts for the visible list items
+    preloadListFonts() {
+      // Preload first 20 fonts for better user experience
+      const fontsToPreload = this.fonts.slice(0, 20);
+      
+      for (const font of fontsToPreload) {
+        this.loadFont(font.family);
+      }
+    },
+    
+    // Load a specific font with appropriate weights and variations
+    loadFont(fontFamily) {
+      if (!fontFamily) return;
+      
+      const fontInfo = FONTS[fontFamily];
+      if (!fontInfo) return;
+      
+      try {
+        // For variable fonts, we need to include the axis ranges in the URL
+        let fontURL = fontFamily.replace(/ /g, '+');
+        
+        if (fontInfo.isVariable && fontInfo.axes) {
+          // Add axis ranges to the URL
+          const axisParams = fontInfo.axes.map(axis => {
+            return `${axis.tag},${axis.start}..${axis.end}`;
+          }).join(';');
+          
+          if (axisParams) {
+            fontURL += `:${axisParams}`;
+          }
+        } else if (fontInfo.weights && fontInfo.weights.length) {
+          // For non-variable fonts, include all available weights
+          fontURL += `:${fontInfo.weights.join(',')}`;
+        }
+        
+        console.log('Loading font:', fontURL);
+        
+        // Use WebFont to load the font if available
+        if (window.WebFont) {
+          window.WebFont.load({
+            google: {
+              families: [fontURL]
+            },
+            active: () => {
+              console.log('Font loaded successfully:', fontFamily);
+              this.$forceUpdate();
+            },
+            inactive: () => {
+              console.warn('Failed to load font:', fontFamily);
+            }
+          });
+        } else {
+          // Fallback: add a link element to load the font
+          const linkId = `font-link-${fontFamily.replace(/\s+/g, '-').toLowerCase()}`;
+          let link = document.getElementById(linkId);
+          
+          if (!link) {
+            link = document.createElement('link');
+            link.id = linkId;
+            link.rel = 'stylesheet';
+            document.head.appendChild(link);
+          }
+          
+          link.href = `https://fonts.googleapis.com/css2?family=${fontURL}&display=swap`;
+        }
+      } catch (error) {
+        console.error('Error loading font:', error);
+      }
+    },
+    
     // Calculate and set the popup position based on the trigger element
     calculatePopupPosition() {
       const triggerEl = this.$refs.fontPreview;
       if (!triggerEl) return;
       
       const triggerRect = triggerEl.getBoundingClientRect();
-      const panelWidth = 400; // Fixed panel width
       const panelHeight = 500; // Estimated panel height
       
       // Check if there's enough space below
@@ -440,162 +732,143 @@ export default {
       }
     },
     
-    // Load the Google Fonts API
-    loadGoogleFontsAPI() {
-      // Check if API is already loaded
-      if (window.WebFontConfig) return;
-      
-      // Set up the API
-      window.WebFontConfig = {
-        google: {
-          families: []
-        },
-        active: () => {
-          // Fonts are loaded
-        },
-        inactive: () => {
-          this.apiError = 'Failed to load Google Fonts.';
-        }
-      };
-      
-      // Load the WebFont loader script
-      const wf = document.createElement('script');
-      wf.src = 'https://ajax.googleapis.com/ajax/libs/webfont/1.6.26/webfont.js';
-      wf.async = true;
-      document.head.appendChild(wf);
-    },
-    
-    // Load a specific font
-    loadFont(fontFamily) {
-      if (!fontFamily) return;
-      
-      // Check if WebFont is loaded
-      if (!window.WebFont) {
-        // If not, try again in a moment
-        setTimeout(() => this.loadFont(fontFamily), 100);
-        return;
-      }
-      
-      // Load the font
-      window.WebFont.load({
-        google: {
-          families: [`${fontFamily}:100,200,300,400,500,600,700,800,900`]
-        }
-      });
-    },
-    
-    // Fetch all fonts from Google Fonts API
-    async fetchAllFonts() {
-      // If we have a recent cache, use it
-      if (fontsCache.all && (Date.now() - fontsCache.lastFetched < 24 * 60 * 60 * 1000)) {
-        return fontsCache.all;
-      }
-      
-      this.isLoading = true;
-      this.apiError = null;
-      
-      try {
-        const response = await fetch('https://www.googleapis.com/webfonts/v1/webfonts?key=AIzaSyAOES8EmKhuJEnsn9kS1XKBpxxp-TgN8Jc&sort=popularity');
-        const data = await response.json();
-        
-        // Check for API errors
-        if (!data.items) {
-          throw new Error('Invalid response from Google Fonts API');
-        }
-        
-        // Process font data
-        const fonts = data.items.map(font => ({
-          family: font.family,
-          category: font.category,
-          variants: font.variants.filter(v => !v.includes('italic'))
-        }));
-        
-        // Cache the results
-        fontsCache.all = fonts;
-        fontsCache.lastFetched = Date.now();
-        
-        return fonts;
-      } catch (error) {
-        this.apiError = 'Error loading fonts: ' + error.message;
-        return [];
-      } finally {
-        this.isLoading = false;
-      }
-    },
-    
     // Search fonts based on input
-    async searchFonts() {
+    searchFonts() {
       if (this.searchTerm.length === 0) {
-        // Show popular fonts if search is empty
-        this.fonts = [...this.popularFonts];
+        // Show all fonts if search is empty
+        this.fonts = [...this.allFonts];
         return;
-      }
-      
-      // Check if we have this search in cache
-      if (fontsCache.search[this.searchTerm]) {
-        this.fonts = fontsCache.search[this.searchTerm];
-        return;
-      }
-      
-      // Get all fonts if needed
-      let allFonts = fontsCache.all;
-      if (!allFonts) {
-        allFonts = await this.fetchAllFonts();
       }
       
       // Filter fonts based on search term
       const searchLower = this.searchTerm.toLowerCase();
-      const results = allFonts.filter(font =>
+      this.fonts = this.allFonts.filter(font =>
         font.family.toLowerCase().includes(searchLower)
       );
       
-      // Cache the search results
-      fontsCache.search[this.searchTerm] = results;
-      
-      // Update the font list
-      this.fonts = results;
+      // Preload search results
+      this.$nextTick(() => {
+        this.preloadListFonts();
+      });
     },
     
     // Select a font from the list
     selectFont(font) {
-      // Update temp config
-      this.tempConfig.family = font.family;
-      this.tempConfig.category = font.category;
-      this.tempConfig.variants = font.variants;
+      if (!font || !this.tempConfig) return;
       
-      // Adjust weight if current weight is not supported
-      const weightStr = this.tempConfig.weight.toString();
-      if (!font.variants.includes(weightStr)) {
-        // Find closest available weight
-        const weights = font.variants
-          .filter(v => !isNaN(parseInt(v)))
-          .map(v => parseInt(v))
-          .sort((a, b) => a - b);
+      try {
+        console.log(`Selecting font: ${font.family}`);
         
-        if (weights.length > 0) {
-          // Find the closest weight
-          const closestWeight = weights.reduce((prev, curr) => 
-            Math.abs(curr - this.tempConfig.weight) < Math.abs(prev - this.tempConfig.weight) ? curr : prev
-          );
-          this.tempConfig.weight = closestWeight;
+        // Update basic properties
+        this.tempConfig.family = font.family;
+        this.tempConfig.category = font.category;
+        
+        const fontInfo = FONTS[font.family];
+        if (!fontInfo) {
+          console.warn(`No font info found for ${font.family}`);
+          return;
         }
+        
+        console.log(`Font info for ${font.family}:`, 
+                   `variable: ${!!fontInfo.isVariable}`, 
+                   `axes: ${fontInfo.axes ? fontInfo.axes.length : 'none'}`,
+                   `weights: ${fontInfo.weights ? fontInfo.weights.join(',') : 'none'}`);
+        
+        // IMPORTANT: Use a completely different approach to clear axes
+        this.tempConfig.axes = {};  // This works because tempConfig itself is reactive
+        
+        // Handle variable font axes
+        if (fontInfo.isVariable && Array.isArray(fontInfo.axes) && fontInfo.axes.length > 0) {
+          console.log(`Processing variable font axes for ${font.family}`);
+          
+          // Log all available axes for debugging
+          fontInfo.axes.forEach(axis => {
+            if (axis && axis.tag) {
+              console.log(`Available axis: ${axis.tag}, range: ${axis.start}-${axis.end}`);
+            }
+          });
+          
+          for (let i = 0; i < fontInfo.axes.length; i++) {
+            const axis = fontInfo.axes[i];
+            if (!axis || !axis.tag) continue;
+            
+            const defaultValue = Math.round((axis.start + axis.end) / 2);
+            
+            if (axis.tag === 'wght') {
+              // Special case for weight
+              const weight = Math.min(Math.max(this.tempConfig.weight, axis.start), axis.end);
+              this.tempConfig.weight = weight;
+            } else {
+              // Set other axes (works in Vue 3)
+              console.log(`Setting axis ${axis.tag} to ${defaultValue}`);
+              this.tempConfig.axes[axis.tag] = defaultValue;
+              
+              // Force Vue to recognize the change by making a computed property access
+              this.$nextTick(() => {
+                console.log(`Axis ${axis.tag} set to:`, this.tempConfig.axes[axis.tag]);
+              });
+            }
+          }
+        } else if (Array.isArray(fontInfo.weights) && fontInfo.weights.length > 0) {
+          console.log(`Processing standard font weights for ${font.family}`);
+          // For non-variable fonts, adjust to nearest available weight
+          const weights = fontInfo.weights.map(w => parseInt(w));
+          this.tempConfig.weight = this.findClosestWeight(weights, this.tempConfig.weight);
+        }
+        
+        // Load the font for preview
+        this.loadFont(font.family);
+        
+        // Force refresh of computed properties
+        this.$forceUpdate();
+      } catch (error) {
+        console.error('Error in selectFont:', error);
+      }
+    },
+    
+    // Find closest available weight
+    findClosestWeight(weights, targetWeight) {
+      return weights.reduce((prev, curr) => 
+        Math.abs(curr - targetWeight) < Math.abs(prev - targetWeight) ? curr : prev
+      );
+    },
+    
+    // Get weight step for non-variable fonts
+    getWeightStep() {
+      // If there are very few weights, use a larger step to snap to available weights
+      const weights = this.availableWeights.map(w => parseInt(w));
+      if (weights.length <= 1) return 100;
+      
+      // Sort weights in ascending order
+      weights.sort((a, b) => a - b);
+      
+      // Calculate minimum difference between consecutive weights
+      let minDiff = 100;
+      for (let i = 1; i < weights.length; i++) {
+        const diff = weights[i] - weights[i-1];
+        if (diff < minDiff) minDiff = diff;
       }
       
-      // Load the font for preview
-      this.loadFont(font.family);
+      return minDiff;
     },
     
     // Apply the selection
     applySelection() {
+      if (!this.tempConfig) return;
+      
       // Create the result object
       const result = {
         family: this.tempConfig.family,
         category: this.tempConfig.category,
         size: this.tempConfig.size,
         weight: this.tempConfig.weight,
-        effect: this.tempConfig.effect,
-        variants: this.tempConfig.variants
+        effect: this.tempConfig.effect
       };
+      
+      // Add axes if there are any
+      if (this.tempConfig.axes && Object.keys(this.tempConfig.axes).length > 0) {
+        result.axes = { ...this.tempConfig.axes };
+      }
       
       // Emit the updated model value
       this.$emit('update:modelValue', result);
@@ -604,21 +877,301 @@ export default {
     
     // Cancel and close the panel
     cancelSelection() {
-      this.tempConfig = { ...this.originalConfig };
-      this.panelOpen = false;
+      if (!this.tempConfig) {
+        this.panelOpen = false;
+        return;
+      }
+      
+      try {
+        // Update from originalConfig, property by property
+        this.tempConfig.family = this.originalConfig.family;
+        this.tempConfig.category = this.originalConfig.category;
+        this.tempConfig.size = this.originalConfig.size;
+        this.tempConfig.weight = this.originalConfig.weight;
+        this.tempConfig.effect = this.originalConfig.effect;
+        
+        // Reset axes by creating a new empty object
+        this.tempConfig.axes = {};
+        
+        // Copy axes from originalConfig
+        if (this.originalConfig.axes) {
+          Object.entries(this.originalConfig.axes).forEach(([key, value]) => {
+            this.tempConfig.axes[key] = value;
+          });
+        }
+        
+        this.panelOpen = false;
+      } catch (error) {
+        console.error('Error in cancelSelection:', error);
+        this.panelOpen = false;
+      }
     },
     
     // Helper methods for style computation
     getTextDecoration() {
+      if (!this.tempConfig) return 'none';
       if (this.tempConfig.effect === 'underline') return 'underline';
       if (this.tempConfig.effect === 'strikethrough') return 'line-through';
       return 'none';
     },
     
     getTextShadow() {
+      if (!this.tempConfig) return 'none';
       if (this.tempConfig.effect === 'shadow') return '1px 1px 2px rgba(0,0,0,0.3)';
       if (this.tempConfig.effect === 'drop-shadow') return '2px 2px 4px rgba(0,0,0,0.5)';
       return 'none';
+    },
+    
+    // Get the computed style for the preview text
+    getPreviewStyle() {
+      if (!this.tempConfig) return {};
+      
+      // Start with basic style properties
+      const style = {
+        fontFamily: `'${this.tempConfig.family}', ${this.tempConfig.category}`,
+        fontSize: `${this.tempConfig.size}pt`,
+        textTransform: this.tempConfig.effect === 'uppercase' ? 'uppercase' : 'none',
+        fontVariantCaps: this.tempConfig.effect === 'small-caps' ? 'small-caps' : 'normal',
+        textDecoration: this.getTextDecoration(),
+        textShadow: this.getTextShadow(),
+        backgroundColor: this.tempConfig.effect === 'highlight' ? 'rgba(255, 255, 0, 0.3)' : 'transparent'
+      };
+      
+      // Apply font-weight from the tempConfig
+      style.fontWeight = this.tempConfig.weight;
+      
+      // Apply specific CSS properties for each axis if they exist in tempConfig.axes
+      if (this.tempConfig.axes) {
+        // Width (wdth) → font-stretch
+        if (this.tempConfig.axes.wdth !== undefined) {
+          // font-stretch accepts percentage values
+          style.fontStretch = `${this.tempConfig.axes.wdth}%`;
+        }
+        
+        // Italic (ital) → font-style
+        if (this.tempConfig.axes.ital !== undefined) {
+          // ital is typically 0 to 1, where 1 is italic
+          style.fontStyle = this.tempConfig.axes.ital > 0.5 ? 'italic' : 'normal';
+        }
+        
+        // Slant (slnt) → font-style with oblique
+        if (this.tempConfig.axes.slnt !== undefined) {
+          // slnt is typically negative for backwards slant
+          style.fontStyle = `oblique ${this.tempConfig.axes.slnt}deg`;
+        }
+        
+        // Optical size (opsz) → font-optical-sizing
+        if (this.tempConfig.axes.opsz !== undefined) {
+          style.fontOpticalSizing = 'auto'; // Enable optical sizing
+          // Some fonts might need a specific size set
+          style.fontSize = `${this.tempConfig.axes.opsz}pt`;
+        }
+      }
+      
+      console.log('Applied style:', style);
+      return style;
+    },
+    
+    // Get CSS font-variation-settings string for variable fonts
+    getVariationSettings() {
+      try {
+        if (!this.tempConfig || !this.selectedFontInfo || !this.selectedFontInfo.isVariable) {
+          return '';
+        }
+        
+        let settings = `"wght" ${this.tempConfig.weight}`;
+        
+        // Safely access axes properties
+        if (this.tempConfig.axes) {
+          const axisEntries = Object.entries(this.tempConfig.axes);
+          console.log('Current axes values:', this.tempConfig.axes);
+          
+          for (let i = 0; i < axisEntries.length; i++) {
+            const [tag, value] = axisEntries[i];
+            if (tag !== 'wght') { // Skip wght as it's already included
+              settings += `, "${tag}" ${value}`;
+            }
+          }
+        }
+        
+        // Make sure we also add axes from the font definition if they're not in tempConfig
+        if (this.selectedFontInfo.axes) {
+          for (const axis of this.selectedFontInfo.axes) {
+            if (axis.tag !== 'wght' && (!this.tempConfig.axes[axis.tag])) {
+              const defaultValue = Math.round((axis.start + axis.end) / 2);
+              settings += `, "${axis.tag}" ${defaultValue}`;
+              
+              // Add it to tempConfig.axes for future use
+              this.tempConfig.axes[axis.tag] = defaultValue;
+            }
+          }
+        }
+        
+        console.log('Font variation settings:', settings);
+        return settings;
+      } catch (error) {
+        console.error('Error in getVariationSettings:', error);
+        return '';
+      }
+    },
+    
+    // Get variation settings from a config object
+    getVariationSettingsFromConfig(config) {
+      if (!config || !config.family) return '';
+      
+      const fontInfo = FONTS[config.family];
+      if (!fontInfo || !fontInfo.isVariable) return '';
+      
+      let settings = `"wght" ${config.weight}`;
+      
+      // Add other axes
+      if (config.axes) {
+        for (const [tag, value] of Object.entries(config.axes)) {
+          settings += `, "${tag}" ${value}`;
+        }
+      }
+      
+      return settings;
+    },
+    
+    // Get the minimum value for an axis
+    getAxisMin(tag) {
+      if (!this.selectedFontInfo || !this.selectedFontInfo.isVariable || !this.selectedFontInfo.axes) {
+        return tag === 'wght' ? 400 : 0;
+      }
+      
+      const axis = this.selectedFontInfo.axes.find(a => a.tag === tag);
+      return axis ? axis.start : (tag === 'wght' ? 400 : 0);
+    },
+    
+    // Get the maximum value for an axis
+    getAxisMax(tag) {
+      if (!this.selectedFontInfo || !this.selectedFontInfo.isVariable || !this.selectedFontInfo.axes) {
+        return tag === 'wght' ? 700 : 100;
+      }
+      
+      const axis = this.selectedFontInfo.axes.find(a => a.tag === tag);
+      return axis ? axis.end : (tag === 'wght' ? 700 : 100);
+    },
+    
+    // Update axis value with manual event handling
+    updateAxisValue(tag, value) {
+      if (!this.tempConfig || !this.tempConfig.axes) return;
+      
+      // Convert to number
+      const numValue = parseFloat(value);
+      
+      console.log(`Updating axis ${tag} to ${numValue}`);
+      
+      // Set the value
+      this.tempConfig.axes[tag] = numValue;
+      
+      // Update the preview style immediately
+      this.$nextTick(() => {
+        if (this.$refs.previewText) {
+          const style = this.getPreviewStyle();
+          Object.entries(style).forEach(([prop, value]) => {
+            this.$refs.previewText.style[prop] = value;
+          });
+          
+          // Also update font-variation-settings if applicable
+          if (this.selectedFontInfo && this.selectedFontInfo.isVariable) {
+            const variationSettings = this.getVariationSettings();
+            if (variationSettings) {
+              this.$refs.previewText.style.fontVariationSettings = variationSettings;
+            }
+          }
+        }
+        
+        this.$forceUpdate();
+      });
+    },
+    
+    // Update weight with manual event handling 
+    updateWeight(value) {
+      if (!this.tempConfig) return;
+      
+      // Convert to number
+      const numValue = parseInt(value, 10);
+      
+      console.log(`Updating weight to ${numValue}`);
+      
+      // Set the value
+      this.tempConfig.weight = numValue;
+      
+      // Update the preview style immediately
+      this.$nextTick(() => {
+        if (this.$refs.previewText) {
+          const style = this.getPreviewStyle();
+          Object.entries(style).forEach(([prop, value]) => {
+            this.$refs.previewText.style[prop] = value;
+          });
+          
+          // Also update font-variation-settings if applicable
+          if (this.selectedFontInfo && this.selectedFontInfo.isVariable) {
+            const variationSettings = this.getVariationSettings();
+            if (variationSettings) {
+              this.$refs.previewText.style.fontVariationSettings = variationSettings;
+            }
+          }
+        }
+        
+        this.$forceUpdate();
+      });
+    },
+    
+    // Get a human-readable label for an axis
+    getAxisLabel(tag) {
+      const axisLabels = {
+        'wght': 'Weight',
+        'wdth': 'Width',
+        'slnt': 'Slant',
+        'ital': 'Italic',
+        'opsz': 'Optical Size'
+      };
+      
+      return axisLabels[tag] || tag.toUpperCase();
+    },
+    
+    // Get a weight label for any weight value (including non-standard weights)
+    approximateWeightLabel(weight) {
+      if (typeof weight !== 'number') return 'Regular';
+      
+      // Find the closest standard weight
+      const standardWeights = [100, 200, 300, 400, 500, 600, 700, 800, 900];
+      let closestWeight = standardWeights.reduce((prev, curr) => 
+        Math.abs(curr - weight) < Math.abs(prev - weight) ? curr : prev
+      );
+      
+      return this.weightLabels[closestWeight] || `Weight ${weight}`;
+    },
+    
+    // Get a good preview weight for a font in the list
+    getFontPreviewWeight(font) {
+      const fontInfo = FONTS[font.family];
+      if (!fontInfo) return 400;
+      
+      // For variable fonts, use a weight in the middle of the range
+      if (fontInfo.isVariable && fontInfo.axes) {
+        const weightAxis = fontInfo.axes.find(a => a.tag === 'wght');
+        if (weightAxis) {
+          return Math.round((weightAxis.start + weightAxis.end) / 2);
+        }
+      }
+      
+      // For non-variable fonts, use the available weights
+      const weights = fontInfo.weights;
+      if (weights && weights.length) {
+        // Prefer regular (400) if available, otherwise medium (500) or bold (700)
+        if (weights.includes('400')) return 400;
+        if (weights.includes('500')) return 500;
+        if (weights.includes('700')) return 700;
+        
+        // Otherwise use the middle weight
+        return parseInt(weights[Math.floor(weights.length / 2)]);
+      }
+      
+      return 400; // Default
     }
   }
 };
@@ -750,27 +1303,6 @@ export default {
   font-size: 14px;
 }
 
-.loading-indicator {
-  position: absolute;
-  right: 10px;
-  top: 50%;
-  transform: translateY(-50%);
-}
-
-.loading-spinner {
-  display: inline-block;
-  width: 16px;
-  height: 16px;
-  border: 2px solid rgba(0, 0, 0, 0.1);
-  border-top-color: #3498db;
-  border-radius: 50%;
-  animation: spin 1s linear infinite;
-}
-
-@keyframes spin {
-  to { transform: rotate(360deg); }
-}
-
 /* Font Preview Area */
 .font-preview-area {
   padding: 16px;
@@ -778,13 +1310,15 @@ export default {
   border-radius: 4px;
   background-color: #fff;
   box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.05);
+  max-height: 150px;
+  overflow: auto;
 }
 
 .preview-text {
-  font-size: 18px;
   line-height: 1.5;
   white-space: normal;
   word-wrap: break-word;
+  max-width: 100%;
 }
 
 /* Controls */
@@ -838,14 +1372,24 @@ export default {
   cursor: pointer;
 }
 
-.slider:disabled {
-  opacity: 0.5;
-}
-
 .slider-value {
   min-width: 60px;
   font-size: 14px;
   text-align: right;
+}
+
+/* Weight Select */
+.weight-select-container {
+  width: 100%;
+}
+
+.weight-select {
+  width: 100%;
+  padding: 6px 8px;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  background-color: #fff;
+  font-size: 14px;
 }
 
 /* Font Effects */
@@ -915,14 +1459,10 @@ export default {
 }
 
 /* Status Messages */
-.api-error, .loading-message, .no-results {
+.no-results {
   padding: 20px;
   text-align: center;
   color: #666;
-}
-
-.api-error {
-  color: #e74c3c;
 }
 
 /* Buttons */
