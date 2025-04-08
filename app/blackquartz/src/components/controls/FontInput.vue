@@ -16,19 +16,22 @@
       </div>
     </div>
     
-    <!-- Font Panel Popup -->
-    <div 
-      v-if="panelOpen && tempConfig" 
-      class="font-panel-popup" 
-      :style="popupStyle"
-      ref="fontPanel"
+    <!-- Font Panel using InputDetailComponent -->
+    <InputDetailComponent
+      v-if="tempConfig"
+      :visible="panelOpen"
+      :title="label || 'Select Font'"
+      :display-mode="displayMode"
+      :target-element="$refs.fontPreview"
+      :position="panelPosition"
+      @close="cancelSelection"
+      @apply="applySelection"
+      @cancel="cancelSelection"
+      @update:display-mode="updateDisplayMode"
+      @update:position="updatePanelPosition"
     >
-      <div class="panel-header">
-        <h3>{{ label || 'Select Font' }}</h3>
-        <button class="close-btn" @click="cancelSelection">×</button>
-      </div>
-      
-      <div class="panel-body">
+      <!-- Font Configuration Panel Content -->
+      <div class="font-panel-content">
         <!-- Search Box -->
         <div class="search-container">
           <input 
@@ -162,20 +165,16 @@
           </div>
         </div>
       </div>
-      
-      <div class="panel-footer">
-        <button class="btn cancel" @click="cancelSelection">Cancel</button>
-        <button class="btn apply" @click="applySelection">Apply</button>
-      </div>
-    </div>
+    </InputDetailComponent>
   </div>
 </template>
 
 <script>
 import { reactive } from 'vue';
 import { FONTS } from '../../constants/fonts.js';
+import InputDetailComponent from './InputDetailComponent.vue';
 
-// Font loader helper
+// Font loader helper (unchanged)
 const fontLoader = {
   loadedFonts: new Set(),
   
@@ -232,10 +231,14 @@ const fontLoader = {
 
 export default {
   name: 'FontInput',
+  components: {
+    InputDetailComponent
+  },
   props: {
     modelValue: { required: true },
     label: String,
-    size: { type: String, default: 'regular' } // 'regular' or 'large'
+    size: { type: String, default: 'regular' }, // 'regular' or 'large'
+    defaultDisplayMode: { type: String, default: 'popup' } // 'popup', 'modal', 'tearoff', 'panel'
   },
   emits: ['update:modelValue'],
   data() {
@@ -244,6 +247,10 @@ export default {
       searchTerm: '',
       fonts: [],
       allFonts: [],
+      
+      // Display mode and position
+      displayMode: this.defaultDisplayMode,
+      panelPosition: { top: '0px', left: '0px' },
       
       // Temporary configuration during editing
       tempConfig: null, // Will be initialized in mounted
@@ -256,11 +263,6 @@ export default {
         weight: 400,
         effect: 'none',
         axes: {}
-      },
-      
-      popupStyle: {
-        top: '0px',
-        left: '0px'
       },
       
       // Weight labels
@@ -370,8 +372,6 @@ export default {
       immediate: true
     }
   },
-  // This component still needs both getVariationSettings and the direct CSS property approach
-  // because some browsers might not support all the direct CSS properties
   mounted() {
     console.log('FontInput component mounted');
     
@@ -387,15 +387,6 @@ export default {
     
     // Initialize all fonts from the FONTS object
     this.initializeFonts();
-    
-    // Add click outside listener to close the panel
-    document.addEventListener('mousedown', this.handleClickOutside);
-    
-    // Add resize listener to reposition panel if window size changes
-    window.addEventListener('resize', this.handleResize);
-    
-    // Add scroll listener for all parent elements
-    this.addScrollListeners();
     
     // Initialize WebFont loader
     this.initWebFontLoader();
@@ -435,13 +426,16 @@ export default {
     );
   },
   
-  beforeUnmount() {
-    // Remove event listeners
-    document.removeEventListener('mousedown', this.handleClickOutside);
-    window.removeEventListener('resize', this.handleResize);
-    this.removeScrollListeners();
-  },
   methods: {
+    // Display mode management
+    updateDisplayMode(newMode) {
+      this.displayMode = newMode;
+    },
+    
+    updatePanelPosition(newPosition) {
+      this.panelPosition = newPosition;
+    },
+    
     // Initialize WebFont loader
     initWebFontLoader() {
       if (window.WebFont) return;
@@ -528,7 +522,6 @@ export default {
       
       this.initFromModelValue();
       this.searchTerm = '';
-      this.calculatePopupPosition();
       
       // Show only top fonts initially instead of all fonts
       this.fonts = this.getTopFonts();
@@ -537,11 +530,6 @@ export default {
       this.preloadListFonts();
       
       this.panelOpen = true;
-      
-      // Add a small delay to ensure the panel is rendered before positioning
-      this.$nextTick(() => {
-        this.calculatePopupPosition();
-      });
     },
     
     // Get a curated list of top fonts (mix of sans-serif and serif)
@@ -638,97 +626,6 @@ export default {
         }
       } catch (error) {
         console.error('Error loading font:', error);
-      }
-    },
-    
-    // Calculate and set the popup position based on the trigger element
-    calculatePopupPosition() {
-      const triggerEl = this.$refs.fontPreview;
-      if (!triggerEl) return;
-      
-      const triggerRect = triggerEl.getBoundingClientRect();
-      const panelHeight = 500; // Estimated panel height
-      
-      // Check if there's enough space below
-      const spaceBelow = window.innerHeight - triggerRect.bottom;
-      const shouldPositionAbove = spaceBelow < panelHeight && triggerRect.top > panelHeight;
-      
-      // Position relative to the button, adding a small offset
-      const offsetX = 0; // No horizontal offset
-      const offsetY = 5; // 5px gap between button and popup
-      
-      if (shouldPositionAbove) {
-        // Position above the trigger element
-        this.popupStyle = {
-          bottom: `${window.innerHeight - triggerRect.top + offsetY}px`,
-          left: `${triggerRect.left}px`,
-          top: 'auto'
-        };
-      } else {
-        // Position below the trigger element
-        this.popupStyle = {
-          top: `${triggerRect.bottom + offsetY}px`,
-          left: `${triggerRect.left}px`,
-          bottom: 'auto'
-        };
-      }
-      
-      // After setting initial position, check if it goes off-screen horizontally
-      this.$nextTick(() => {
-        const panel = this.$refs.fontPanel;
-        if (panel) {
-          const panelRect = panel.getBoundingClientRect();
-          
-          // If panel extends beyond right edge of screen, adjust left position
-          if (panelRect.right > window.innerWidth - 10) {
-            const newLeft = Math.max(10, window.innerWidth - panelRect.width - 10);
-            this.popupStyle.left = `${newLeft}px`;
-          }
-        }
-      });
-    },
-    
-    // Handle clicks outside the component to close the panel
-    handleClickOutside(event) {
-      const fontPanel = this.$refs.fontPanel;
-      const fontPreview = this.$refs.fontPreview;
-      
-      if (this.panelOpen && fontPanel && fontPreview) {
-        if (!fontPanel.contains(event.target) && !fontPreview.contains(event.target)) {
-          this.cancelSelection();
-        }
-      }
-    },
-    
-    // Handle window resize
-    handleResize() {
-      if (this.panelOpen) {
-        this.calculatePopupPosition();
-      }
-    },
-    
-    // Add scroll listeners to parent elements
-    addScrollListeners() {
-      let parent = this.$el && this.$el.parentElement;
-      while (parent) {
-        parent.addEventListener('scroll', this.handleScroll);
-        parent = parent.parentElement;
-      }
-    },
-    
-    // Remove scroll listeners
-    removeScrollListeners() {
-      let parent = this.$el && this.$el.parentElement;
-      while (parent) {
-        parent.removeEventListener('scroll', this.handleScroll);
-        parent = parent.parentElement;
-      }
-    },
-    
-    // Handle scroll events in parent elements
-    handleScroll() {
-      if (this.panelOpen) {
-        this.calculatePopupPosition();
       }
     },
     
@@ -1087,39 +984,6 @@ export default {
       });
     },
     
-    // Update weight with manual event handling 
-    updateWeight(value) {
-      if (!this.tempConfig) return;
-      
-      // Convert to number
-      const numValue = parseInt(value, 10);
-      
-      console.log(`Updating weight to ${numValue}`);
-      
-      // Set the value
-      this.tempConfig.weight = numValue;
-      
-      // Update the preview style immediately
-      this.$nextTick(() => {
-        if (this.$refs.previewText) {
-          const style = this.getPreviewStyle();
-          Object.entries(style).forEach(([prop, value]) => {
-            this.$refs.previewText.style[prop] = value;
-          });
-          
-          // Also update font-variation-settings if applicable
-          if (this.selectedFontInfo && this.selectedFontInfo.isVariable) {
-            const variationSettings = this.getVariationSettings();
-            if (variationSettings) {
-              this.$refs.previewText.style.fontVariationSettings = variationSettings;
-            }
-          }
-        }
-        
-        this.$forceUpdate();
-      });
-    },
-    
     // Get a human-readable label for an axis
     getAxisLabel(tag) {
       const axisLabels = {
@@ -1233,61 +1097,11 @@ export default {
   color: #666;
 }
 
-/* Font Panel Popup */
-.font-panel-popup {
-  position: fixed;
-  width: 400px;
-  background-color: white;
-  border-radius: 8px;
-  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.2);
-  z-index: 1000;
-  display: flex;
-  flex-direction: column;
-  border: 1px solid #ddd;
-  max-height: 80vh;
-  overflow: hidden;
-}
-
-.panel-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 12px 8px;
-  border-bottom: 1px solid #eee;
-  background-color: #f9f9f9;
-}
-
-.panel-header h3 {
-  margin: 0;
-  font-size: 16px;
-  color: #333;
-}
-
-.close-btn {
-  background: none;
-  border: none;
-  font-size: 20px;
-  cursor: pointer;
-  color: #666;
-  line-height: 1;
-}
-
-.panel-body {
-  padding: 16px;
-  overflow-y: auto;
-  max-height: 60vh;
+/* Refactored Font Panel Content - no longer needs positioning styles */
+.font-panel-content {
   display: flex;
   flex-direction: column;
   gap: 16px;
-}
-
-.panel-footer {
-  display: flex;
-  justify-content: flex-end;
-  gap: 8px;
-  padding: 12px 16px;
-  border-top: 1px solid #eee;
-  background-color: #f9f9f9;
 }
 
 /* Search Box */
@@ -1325,13 +1139,13 @@ export default {
 .font-controls {
   display: flex;
   flex-direction: column;
-  gap: 0;
+  gap: 12px;
 }
 
 .control-group {
   display: flex;
   flex-direction: column;
-  gap: 0;
+  gap: 4px;
 }
 
 .control-group label {
@@ -1342,7 +1156,7 @@ export default {
 .slider-container {
   display: flex;
   align-items: center;
-  gap: 0;
+  gap: 12px;
 }
 
 .slider {
@@ -1378,20 +1192,6 @@ export default {
   text-align: right;
 }
 
-/* Weight Select */
-.weight-select-container {
-  width: 100%;
-}
-
-.weight-select {
-  width: 100%;
-  padding: 6px 0;
-  border: 1px solid #ddd;
-  border-radius: 4px;
-  background-color: #fff;
-  font-size: 14px;
-}
-
 /* Font Effects */
 .font-effects {
   display: flex;
@@ -1416,6 +1216,7 @@ export default {
 .font-list-container {
   flex: 1;
   min-height: 150px;
+  max-height: 250px;
   border: 1px solid #ddd;
   border-radius: 4px;
   overflow-y: auto;
@@ -1463,33 +1264,5 @@ export default {
   padding: 20px;
   text-align: center;
   color: #666;
-}
-
-/* Buttons */
-.btn {
-  padding: 6px 12px;
-  border-radius: 4px;
-  border: none;
-  font-size: 13px;
-  cursor: pointer;
-  transition: background-color 0.2s;
-}
-
-.btn.cancel {
-  background-color: #f0f0f0;
-  color: #333;
-}
-
-.btn.cancel:hover {
-  background-color: #e0e0e0;
-}
-
-.btn.apply {
-  background-color: #4a8bf5;
-  color: white;
-}
-
-.btn.apply:hover {
-  background-color: #3a7ce5;
 }
 </style>
