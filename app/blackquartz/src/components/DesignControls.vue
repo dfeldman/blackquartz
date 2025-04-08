@@ -150,95 +150,6 @@ editor <shape-editor
         </div>
       </control-group>
       
-      <!-- Typography Settings -->
-      <control-group 
-        title="Typography" 
-        :collapsed="collapsedGroups.typography" 
-        @toggle="$emit('toggle-group', 'typography')"
-      >
-        <button @click="$emit('open-font', 'body')" class="export-button" style="margin-bottom: 15px;">
-          <i class="fas fa-font"></i> Select Body Font
-        </button>
-        
-        <div class="font-preview" :style="{ fontFamily: theme.type.bodyFont }">
-          {{ theme.type.bodyFont.split(',')[0].replace(/'/g, '') }} - The quick brown fox jumps over the lazy dog
-        </div>
-        
-        <button @click="$emit('open-font', 'heading')" class="export-button" style="margin: 15px 0;">
-          <i class="fas fa-heading"></i> Select Heading Font
-        </button>
-        
-        <div class="font-preview" :style="{ fontFamily: theme.type.headingFont }">
-          {{ theme.type.headingFont.split(',')[0].replace(/'/g, '') }} - The quick brown fox jumps over the lazy dog
-        </div>
-        
-        <slider-input 
-          label="Line Height" 
-          v-model="theme.type.lineHeight" 
-          :min="1" 
-          :max="2"
-          :step="0.1"
-        ></slider-input>
-        
-        <h4>Text Color</h4>
-        <button @click="$emit('open-color', 'text')" class="export-button" style="margin-bottom: 15px;">
-          <i class="fas fa-palette"></i> Choose Text Color
-        </button>
-        
-        <themed-color-input 
-          label="Text Color" 
-          v-model="theme.type.textColor"
-          :color-mode="editorState.colorMode"
-          :theme="theme"
-        ></themed-color-input>
-        
-        <div>
-          <label>Text Size (px)</label>
-          <input type="number" min="12" max="24" v-model.number="theme.type.textSize">
-        </div>
-        
-        <h4>Title Typography</h4>
-        <button @click="$emit('open-color', 'title')" class="export-button" style="margin-bottom: 15px;">
-          <i class="fas fa-palette"></i> Choose Title Color
-        </button>
-        
-        <themed-color-input 
-        label="Title Color" 
-        v-model="theme.type.titleColor"
-        :color-mode="editorState.colorMode"
-        :theme="theme"
-        ></themed-color-input>
-        
-        <div>
-          <label>Title Size (px)</label>
-          <input type="number" min="16" max="72" v-model.number="theme.type.titleSize">
-        </div>
-        
-        <div>
-          <label>Title Style</label>
-          <select v-model="theme.type.titleStyle">
-            <option value="normal">Normal</option>
-            <option value="underline">Underline</option>
-            <option value="highlight">Highlight</option>
-            <option value="bordered">Bordered</option>
-            <option value="shadow">Shadow</option>
-            <option value="gradient">Gradient Text</option>
-          </select>
-        </div>
-        
-        <div>
-          <label>Title Alignment</label>
-          <segmented-control 
-            v-model="theme.type.titleAlign"
-            :options="[
-              { value: 'left', label: 'Left' },
-              { value: 'center', label: 'Center' },
-              { value: 'right', label: 'Right' }
-            ]"
-          ></segmented-control>
-        </div>
-      </control-group>
-      
       <!-- Hero Panel -->
       <control-group 
         title="Hero Panel" 
@@ -346,7 +257,6 @@ editor <shape-editor
       SliderInput,
       CheckboxInput,
       ThemedColorInput,
-      SegmentedControl,
         FontInput,
         ShapeEditor
     },

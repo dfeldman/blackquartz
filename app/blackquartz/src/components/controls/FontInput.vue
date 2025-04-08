@@ -1187,7 +1187,7 @@ export default {
 .font-preview-container {
   display: flex;
   align-items: center;
-  padding: 8px 12px;
+  padding: 8px 8px;
   border: 1px solid #ddd;
   border-radius: 4px;
   cursor: pointer;
@@ -1202,7 +1202,7 @@ export default {
 
 /* Large size variant */
 .font-preview-container.large {
-  padding: 12px 16px;
+  padding: 12px 8px;
 }
 
 .font-preview-container.large .font-preview {
@@ -1252,7 +1252,7 @@ export default {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 12px 16px;
+  padding: 12px 8px;
   border-bottom: 1px solid #eee;
   background-color: #f9f9f9;
 }
@@ -1325,13 +1325,13 @@ export default {
 .font-controls {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 0;
 }
 
 .control-group {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 0;
 }
 
 .control-group label {
@@ -1342,7 +1342,7 @@ export default {
 .slider-container {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 0;
 }
 
 .slider {
@@ -1385,7 +1385,7 @@ export default {
 
 .weight-select {
   width: 100%;
-  padding: 6px 8px;
+  padding: 6px 0;
   border: 1px solid #ddd;
   border-radius: 4px;
   background-color: #fff;
