@@ -79,7 +79,7 @@ import ThemePreview from './components/ThemePreview.vue';
 import BackgroundEditor from './components/editors/BackgroundEditor.vue';
 import FontSelector from './components/editors/FontSelector.vue';
 import ColorPicker from './components/editors/ColorPicker.vue';
-import ThemePresets from './services/ThemePresets';
+import ThemePresets from '../constants/ThemePresets';
 import ThemeUtils from './services/ThemeUtils';
 import ThemeIO from './services/ThemeIO';
 import CSSGenerator from './services/CSSGenerator';
@@ -102,7 +102,7 @@ export default {
   data() {
     return {
       // Theme data structure - holds all theme settings
-      theme: ThemePresets.defaultTheme(),
+      theme: { ...ThemePresets.defaultTheme(), bodyStyle: {}, pageStyle: {} },
 
       // Editor state - holds UI state not directly related to the theme
       editorState: {

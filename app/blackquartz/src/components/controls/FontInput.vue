@@ -18,17 +18,19 @@
     
     <!-- Font Panel using InputDetailComponent -->
     <InputDetailComponent
-      v-if="tempConfig"
       :visible="panelOpen"
       :title="label || 'Select Font'"
       :display-mode="displayMode"
       :target-element="$refs.fontPreview"
       :position="panelPosition"
+      :size="panelSize"
+      @update:size="panelSize = $event"  
       @close="cancelSelection"
       @apply="applySelection"
       @cancel="cancelSelection"
       @update:display-mode="updateDisplayMode"
       @update:position="updatePanelPosition"
+      :debug="true"
     >
       <!-- Font Configuration Panel Content -->
       <div class="font-panel-content">
@@ -50,8 +52,6 @@
             :style="getPreviewStyle()"
             ref="previewText"
           >
-            Sphinx of black quartz, judge my vow
-          
             Sphinx of black quartz, judge my vow
           </div>
         </div>
@@ -99,11 +99,10 @@
           
           <!-- Additional Axes Controls (if available) -->
           <template v-for="axis in additionalAxes" :key="axis.tag">
-            <div class="control-group">
+            <div class="control-group" v-if="axis.tag !== 'opsz'">
               <label>{{ axis.tag === 'wdth' ? 'Width' : 
                         axis.tag === 'slnt' ? 'Slant' : 
                         axis.tag === 'ital' ? 'Italic' : 
-                        axis.tag === 'opsz' ? 'Optical Size' : 
                         axis.tag.toUpperCase() }}</label>
               <div class="slider-container">
                 <input 
@@ -170,64 +169,9 @@
 </template>
 
 <script>
-import { reactive } from 'vue';
+import { ref, computed, watch, nextTick, onMounted } from 'vue';
 import { FONTS } from '../../constants/fonts.js';
 import InputDetailComponent from './InputDetailComponent.vue';
-
-// Font loader helper (unchanged)
-const fontLoader = {
-  loadedFonts: new Set(),
-  
-  // Load a specific font
-  load(fontFamily, weights = ["400"]) {
-    if (!fontFamily) return Promise.resolve();
-    
-    const key = `${fontFamily}:${weights.join(',')}`;
-    if (this.loadedFonts.has(key)) return Promise.resolve();
-    
-    return new Promise((resolve, reject) => {
-      // Check if WebFont is available
-      if (!window.WebFont) {
-        // Load the WebFont library if not available
-        const wf = document.createElement('script');
-        wf.src = 'https://ajax.googleapis.com/ajax/libs/webfont/1.6.26/webfont.js';
-        wf.async = true;
-        
-        wf.onload = () => {
-          this._loadWithWebFont(fontFamily, weights, resolve, reject);
-        };
-        
-        wf.onerror = () => {
-          reject(new Error('Failed to load WebFont loader'));
-        };
-        
-        document.head.appendChild(wf);
-      } else {
-        this._loadWithWebFont(fontFamily, weights, resolve, reject);
-      }
-    });
-  },
-  
-  // Internal method to load with WebFont
-  _loadWithWebFont(fontFamily, weights, resolve, reject) {
-    const weightsStr = weights.join(',');
-    const key = `${fontFamily}:${weightsStr}`;
-    
-    window.WebFont.load({
-      google: {
-        families: [`${fontFamily}:${weightsStr}`]
-      },
-      active: () => {
-        this.loadedFonts.add(key);
-        resolve();
-      },
-      inactive: () => {
-        reject(new Error(`Failed to load font: ${fontFamily}`));
-      },
-      timeout: 3000 // 3 seconds timeout
-    });
-  }
-};
 
 export default {
   name: 'FontInput',
@@ -235,79 +179,94 @@ export default {
     InputDetailComponent
   },
   props: {
-    modelValue: { required: true },
-    label: String,
-    size: { type: String, default: 'regular' }, // 'regular' or 'large'
-    defaultDisplayMode: { type: String, default: 'popup' } // 'popup', 'modal', 'tearoff', 'panel'
+    modelValue: {
+      type: Object,
+      default: () => ({
+        family: 'Roboto',
+        category: 'sans-serif',
+        size: 16,
+        weight: 400,
+        effect: 'none',
+        axes: {}
+      })
+    },
+    label: { 
+      type: String, 
+      default: '' 
+    },
+    size: { 
+      type: String, 
+      default: 'regular' 
+    },
+    defaultDisplayMode: { 
+      type: String, 
+      default: 'popup' 
+    },
+    debug: { 
+      type: Boolean, 
+      default: false 
+    }
   },
   emits: ['update:modelValue'],
-  data() {
-    return {
-      panelOpen: false,
-      searchTerm: '',
-      fonts: [],
-      allFonts: [],
+  setup(props, { emit }) {
+    // Font loader helper
+    const fontLoader = {
+      loadedFonts: new Set(),
       
-      // Display mode and position
-      displayMode: this.defaultDisplayMode,
-      panelPosition: { top: '0px', left: '0px' },
-      
-      // Temporary configuration during editing
-      tempConfig: null, // Will be initialized in mounted
-      
-      // Original configuration before editing
-      originalConfig: {
-        family: 'Roboto',
-        category: 'sans-serif',
-        size: 16,
-        weight: 400,
-        effect: 'none',
-        axes: {}
+      // Load a specific font
+      load(fontFamily, weights = ["400"]) {
+        if (!fontFamily) return Promise.resolve();
+        
+        const key = `${fontFamily}:${weights.join(',')}`;
+        if (this.loadedFonts.has(key)) return Promise.resolve();
+        
+        return new Promise((resolve, reject) => {
+          // Check if WebFont is available
+          if (!window.WebFont) {
+            // Load the WebFont library if not available
+            const wf = document.createElement('script');
+            wf.src = 'https://ajax.googleapis.com/ajax/libs/webfont/1.6.26/webfont.js';
+            wf.async = true;
+            
+            wf.onload = () => {
+              this._loadWithWebFont(fontFamily, weights, resolve, reject);
+            };
+            
+            wf.onerror = () => {
+              reject(new Error('Failed to load WebFont loader'));
+            };
+            
+            document.head.appendChild(wf);
+          } else {
+            this._loadWithWebFont(fontFamily, weights, resolve, reject);
+          }
+        });
       },
       
-      // Weight labels
-      weightLabels: {
-        100: 'Thin',
-        200: 'Extra Light',
-        300: 'Light',
-        400: 'Regular',
-        500: 'Medium',
-        600: 'Semi Bold',
-        700: 'Bold',
-        800: 'Extra Bold',
-        900: 'Black'
+      // Internal method to load with WebFont
+      _loadWithWebFont(fontFamily, weights, resolve, reject) {
+        const weightsStr = weights.join(',');
+        const key = `${fontFamily}:${weightsStr}`;
+        
+        window.WebFont.load({
+          google: {
+            families: [`${fontFamily}:${weightsStr}`]
+          },
+          active: () => {
+            this.loadedFonts.add(key);
+            resolve();
+          },
+          inactive: () => {
+            reject(new Error(`Failed to load font: ${fontFamily}`));
+          },
+          timeout: 3000 // 3 seconds timeout
+        });
       }
     };
-  },
-  computed: {
-    // Parse the font configuration from the model value
-    fontConfig() {
-      if (typeof this.modelValue === 'object') {
-        return {
-          family: this.modelValue.family || 'Roboto',
-          category: this.modelValue.category || 'sans-serif',
-          size: this.modelValue.size || 16,
-          weight: this.modelValue.weight || 400,
-          effect: this.modelValue.effect || 'none',
-          axes: this.modelValue.axes || {}
-        };
-      } else if (typeof this.modelValue === 'string') {
-        // Parse font string like "'Roboto', sans-serif"
-        const fontString = this.modelValue;
-        const familyMatch = fontString.match(/'([^']+)'/);
-        const categoryMatch = fontString.match(/, ([a-z-]+)$/);
-        
-        return {
-          family: familyMatch ? familyMatch[1] : 'Roboto',
-          category: categoryMatch ? categoryMatch[1] : 'sans-serif',
-          size: 16,
-          weight: 400,
-          effect: 'none',
-          axes: {}
-        };
-      }
-      
-      return {
+
+    // Safe access to modelValue with defaults
+    const fontConfig = computed(() => {
+      const defaultConfig = {
         family: 'Roboto',
         category: 'sans-serif',
         size: 16,
@@ -315,225 +274,139 @@ export default {
         effect: 'none',
         axes: {}
       };
-    },
-    
-    // Display name for the font
-    displayFontName() {
-      return this.fontConfig.family;
-    },
-    
-    // Style for the preview button
-    previewStyle() {
+      
+      if (!props.modelValue) return defaultConfig;
+      
       return {
-        fontFamily: `'${this.fontConfig.family}', ${this.fontConfig.category}`,
-        fontWeight: this.fontConfig.weight,
-        fontVariationSettings: this.getVariationSettingsFromConfig(this.fontConfig)
+        ...defaultConfig,
+        ...props.modelValue
       };
-    },
-    
+    });
+
+    // Reactive state variables
+    const panelOpen = ref(false);
+    const displayMode = ref(props.defaultDisplayMode);
+    const panelPosition = ref({ top: '0px', left: '0px' });
+    const panelSize = ref({ width: '450px', height: '600px' });
+    const searchTerm = ref('');
+    const fonts = ref([]);
+    const allFonts = ref([]); // To store all fonts for filtering
+    const fontInputContainer = ref(null);
+    const fontPreview = ref(null);
+    const previewText = ref(null);
+
+    // Temporary configuration during editing
+    const tempConfig = ref({
+      family: 'Roboto',
+      category: 'sans-serif',
+      size: 16,
+      weight: 400,
+      effect: 'none',
+      axes: {}
+    });
+
+    // Original configuration before editing
+    const originalConfig = ref({
+      family: 'Roboto',
+      category: 'sans-serif',
+      size: 16,
+      weight: 400,
+      effect: 'none',
+      axes: {}
+    });
+
+    // Weight labels
+    const weightLabels = {
+      100: 'Thin',
+      200: 'Extra Light',
+      300: 'Light',
+      400: 'Regular',
+      500: 'Medium',
+      600: 'Semi Bold',
+      700: 'Bold',
+      800: 'Extra Bold',
+      900: 'Black'
+    };
+
     // Safe weight label that handles null tempConfig
-    safeWeightLabel() {
-      if (!this.tempConfig) {
-        return this.weightLabels[400] || 'Regular'; // Default when tempConfig is null
+    const safeWeightLabel = computed(() => {
+      if (!tempConfig.value) {
+        return weightLabels[400] || 'Regular'; // Default when tempConfig is null
       }
       
-      const weight = this.tempConfig.weight;
-      return this.weightLabels[weight] || this.approximateWeightLabel(weight);
-    },
-    
+      const weight = tempConfig.value.weight;
+      return weightLabels[weight] || approximateWeightLabel(weight);
+    });
+
     // Get the currently selected font info
-    selectedFontInfo() {
-      if (!this.tempConfig) return null;
-      return FONTS[this.tempConfig.family] || null;
-    },
-    
+    const selectedFontInfo = computed(() => {
+      if (!tempConfig.value || !tempConfig.value.family) return null;
+      return FONTS[tempConfig.value.family] || null;
+    });
+
     // Available weights for the selected font (for non-variable fonts)
-    availableWeights() {
-      if (!this.selectedFontInfo) return ["400"];
-      return this.selectedFontInfo.weights || ["400"];
-    },
-    
+    const availableWeights = computed(() => {
+      if (!selectedFontInfo.value) return ["400"];
+      return selectedFontInfo.value.weights || ["400"];
+    });
+
     // Additional axes for variable fonts (excluding weight)
-    additionalAxes() {
-      if (!this.selectedFontInfo || !this.selectedFontInfo.isVariable || !this.selectedFontInfo.axes) {
+    const additionalAxes = computed(() => {
+      if (!selectedFontInfo.value || !selectedFontInfo.value.isVariable || !selectedFontInfo.value.axes) {
         return [];
       }
       
-      return this.selectedFontInfo.axes.filter(axis => axis.tag !== 'wght');
-    }
-  },
-  watch: {
-    modelValue: {
-      handler() {
-        if (this.tempConfig) {
-          this.initFromModelValue();
-        }
-      },
-      immediate: true
-    }
-  },
-  mounted() {
-    console.log('FontInput component mounted');
-    
-    // Initialize tempConfig immediately with proper reactivity
-    this.tempConfig = reactive({
-      family: this.fontConfig.family || 'Roboto',
-      category: this.fontConfig.category || 'sans-serif',
-      size: this.fontConfig.size || 16,
-      weight: this.fontConfig.weight || 400,
-      effect: this.fontConfig.effect || 'none',
-      axes: {}
+      return selectedFontInfo.value.axes.filter(axis => axis.tag !== 'wght');
     });
-    
-    // Initialize all fonts from the FONTS object
-    this.initializeFonts();
-    
-    // Initialize WebFont loader
-    this.initWebFontLoader();
-    
-    // Initialize from model value
-    this.initFromModelValue();
-    
-    // Set up watcher for axes changes
-    this.$watch(
-      () => this.tempConfig.axes,
-      () => {
-        console.log('Axes changed:', this.tempConfig.axes);
-        
-        // Update the preview text element directly
-        this.$nextTick(() => {
-          if (this.$refs.previewText) {
-            const style = this.getPreviewStyle();
-            
-            // Apply direct CSS properties first
-            Object.entries(style).forEach(([prop, value]) => {
-              this.$refs.previewText.style[prop] = value;
-            });
-            
-            // As a fallback, also apply font-variation-settings for better browser compatibility
-            if (this.selectedFontInfo && this.selectedFontInfo.isVariable) {
-              const variationSettings = this.getVariationSettings();
-              if (variationSettings) {
-                this.$refs.previewText.style.fontVariationSettings = variationSettings;
-              }
-            }
-          }
-          
-          this.$forceUpdate();
-        });
-      },
-      { deep: true }
-    );
-  },
-  
-  methods: {
-    // Display mode management
-    updateDisplayMode(newMode) {
-      this.displayMode = newMode;
-    },
-    
-    updatePanelPosition(newPosition) {
-      this.panelPosition = newPosition;
-    },
-    
-    // Initialize WebFont loader
-    initWebFontLoader() {
-      if (window.WebFont) return;
-      
-      // Load the WebFont library if not available
-      const wf = document.createElement('script');
-      wf.src = 'https://ajax.googleapis.com/ajax/libs/webfont/1.6.26/webfont.js';
-      wf.async = true;
-      document.head.appendChild(wf);
-    },
-    
-    // Initialize fonts from the FONTS object
-    initializeFonts() {
-      this.allFonts = Object.values(FONTS).map(font => ({
-        family: font.family,
-        category: font.category,
-        weights: font.weights || ["400"],
-        isVariable: font.isVariable || false,
-        axes: font.axes || []
+
+    // Display name for the font
+    const displayFontName = computed(() => {
+      return fontConfig.value.family || 'Select Font';
+    });
+
+    // Style for the preview button
+    const previewStyle = computed(() => {
+      return {
+        fontFamily: `'${fontConfig.value.family}', ${fontConfig.value.category}`,
+        fontWeight: fontConfig.value.weight,
+        fontVariationSettings: getVariationSettingsFromConfig(fontConfig.value)
+      };
+    });
+
+    // Initialize data
+    const initData = () => {
+      // Convert FONTS object to array for easier filtering
+      allFonts.value = Object.entries(FONTS).map(([family, info]) => ({
+        family,
+        category: info.category || 'sans-serif',
+        weights: info.weights || ['400'],
+        isVariable: info.isVariable || false,
+        axes: info.axes || []
       }));
       
-      // Set initial fonts list
-      this.fonts = [...this.allFonts];
+      // Initial font list (top fonts)
+      fonts.value = getTopFonts();
+    };
+
+    // Initialize from model value
+    const initFromModelValue = () => {
+      // Initialize with a safe copy of current value
+      const currentValue = {
+        ...fontConfig.value
+      };
       
-      // Load current font
-      this.loadFont(this.fontConfig.family);
-    },
-    
-    // Initialize component data from model value
-    initFromModelValue() {
-      try {
-        if (!this.tempConfig) {
-          console.warn('tempConfig is null in initFromModelValue');
-          return;
-        }
-        
-        // Update individual properties instead of replacing the entire object
-        this.tempConfig.family = this.fontConfig.family || 'Roboto';
-        this.tempConfig.category = this.fontConfig.category || 'sans-serif';
-        this.tempConfig.size = this.fontConfig.size || 16;
-        this.tempConfig.weight = this.fontConfig.weight || 400;
-        this.tempConfig.effect = this.fontConfig.effect || 'none';
-        
-        // Important: create a new empty object for axes to avoid reactivity issues
-        this.tempConfig.axes = {};
-        
-        // Copy axes safely from fontConfig
-        if (this.fontConfig.axes) {
-          Object.entries(this.fontConfig.axes).forEach(([key, value]) => {
-            this.tempConfig.axes[key] = value;
-          });
-        }
-        
-        // Store original config (deep copy)
-        this.originalConfig = {
-          family: this.fontConfig.family || 'Roboto',
-          category: this.fontConfig.category || 'sans-serif',
-          size: this.fontConfig.size || 16,
-          weight: this.fontConfig.weight || 400,
-          effect: this.fontConfig.effect || 'none',
-          axes: {}
-        };
-        
-        // Copy axes to originalConfig
-        if (this.fontConfig.axes) {
-          Object.entries(this.fontConfig.axes).forEach(([key, value]) => {
-            this.originalConfig.axes[key] = value;
-          });
-        }
-        
-        // Ensure the font is loaded for preview
-        this.loadFont(this.tempConfig.family);
-      } catch (error) {
-        console.error('Error in initFromModelValue:', error);
-      }
-    },
-    
-    // Open the font selection panel
-    openPanel() {
-      if (!this.tempConfig) {
-        console.error('tempConfig is null in openPanel');
-        return;
-      }
+      // Deep copy the axes
+      currentValue.axes = { ...(fontConfig.value.axes || {}) };
       
-      this.initFromModelValue();
-      this.searchTerm = '';
+      // Store original config for cancel operation
+      originalConfig.value = JSON.parse(JSON.stringify(currentValue));
       
-      // Show only top fonts initially instead of all fonts
-      this.fonts = this.getTopFonts();
-      
-      // Load fonts for the list
-      this.preloadListFonts();
-      
-      this.panelOpen = true;
-    },
-    
+      // Set the temporary config (used during editing)
+      tempConfig.value = JSON.parse(JSON.stringify(currentValue));
+    };
+
     // Get a curated list of top fonts (mix of sans-serif and serif)
-    getTopFonts() {
+    const getTopFonts = () => {
       // Define a list of popular font families
       const popularFamilies = [
         'Roboto', 'Open Sans', 'Lato', 'Montserrat', 'Source Sans Pro',
@@ -543,8 +416,7 @@ export default {
       ];
       
       // Filter the allFonts array to include only fonts from the popularFamilies list
-      // If a font in popularFamilies doesn't exist in allFonts, it will be skipped
-      const topFonts = this.allFonts.filter(font => 
+      const topFonts = allFonts.value.filter(font => 
         popularFamilies.includes(font.family)
       );
       
@@ -557,20 +429,31 @@ export default {
       
       // Limit to 20 fonts (though the list should already be curated)
       return topFonts.slice(0, 20);
-    },
-    
+    };
+
     // Preload fonts for the visible list items
-    preloadListFonts() {
+    const preloadListFonts = async () => {
       // Preload first 20 fonts for better user experience
-      const fontsToPreload = this.fonts.slice(0, 20);
+      const fontsToPreload = fonts.value.slice(0, 20);
+      
+      // Load fonts in parallel but with a small delay between each to avoid rate limiting
+      const loadPromises = [];
       
       for (const font of fontsToPreload) {
-        this.loadFont(font.family);
+        const loadPromise = loadFont(font.family);
+        loadPromises.push(loadPromise);
+        
+        // Small delay between font loading requests
+        await new Promise(resolve => setTimeout(resolve, 50));
       }
-    },
-    
+      
+      // Wait for all fonts to load
+      await Promise.all(loadPromises);
+      console.log('All preview fonts loaded');
+    };
+
     // Load a specific font with appropriate weights and variations
-    loadFont(fontFamily) {
+    const loadFont = async (fontFamily) => {
       if (!fontFamily) return;
       
       const fontInfo = FONTS[fontFamily];
@@ -580,85 +463,143 @@ export default {
         // For variable fonts, we need to include the axis ranges in the URL
         let fontURL = fontFamily.replace(/ /g, '+');
         
+        // Build comma-separated weight list for non-variable fonts
+        let weightsParam = '';
+        if (fontInfo.weights && fontInfo.weights.length) {
+          weightsParam = fontInfo.weights.join(',');
+        } else {
+          // Default weights if none specified
+          weightsParam = '400,700';
+        }
+        
+        // For variable fonts, handle axis ranges
+        let axisParams = '';
         if (fontInfo.isVariable && fontInfo.axes) {
           // Add axis ranges to the URL
-          const axisParams = fontInfo.axes.map(axis => {
+          axisParams = fontInfo.axes.map(axis => {
             return `${axis.tag},${axis.start}..${axis.end}`;
           }).join(';');
-          
-          if (axisParams) {
-            fontURL += `:${axisParams}`;
-          }
-        } else if (fontInfo.weights && fontInfo.weights.length) {
-          // For non-variable fonts, include all available weights
-          fontURL += `:${fontInfo.weights.join(',')}`;
+        }
+        
+        // Build the final font URL
+        if (axisParams) {
+          fontURL += `:${axisParams}`;
+        } else if (weightsParam) {
+          fontURL += `:${weightsParam}`;
         }
         
         console.log('Loading font:', fontURL);
         
-        // Use WebFont to load the font if available
-        if (window.WebFont) {
-          window.WebFont.load({
-            google: {
-              families: [fontURL]
-            },
-            active: () => {
-              console.log('Font loaded successfully:', fontFamily);
-              this.$forceUpdate();
-            },
-            inactive: () => {
-              console.warn('Failed to load font:', fontFamily);
+        return new Promise((resolve, reject) => {
+          // Use WebFont to load the font
+          if (typeof window.WebFont !== 'undefined') {
+            window.WebFont.load({
+              google: {
+                families: [fontURL]
+              },
+              active: () => {
+                console.log('Font loaded successfully:', fontFamily);
+                resolve();
+              },
+              inactive: () => {
+                console.warn('Failed to load font:', fontFamily);
+                // Resolve anyway to prevent blocking
+                resolve();
+              },
+              timeout: 2000 // 2 second timeout
+            });
+          } else {
+            // If WebFont is not available, use a link element as fallback
+            const linkId = `font-link-${fontFamily.replace(/\s+/g, '-').toLowerCase()}`;
+            let link = document.getElementById(linkId);
+            
+            if (!link) {
+              link = document.createElement('link');
+              link.id = linkId;
+              link.rel = 'stylesheet';
+              link.href = `https://fonts.googleapis.com/css2?family=${fontURL}&display=swap`;
+              document.head.appendChild(link);
+              
+              // Wait for font to load
+              link.onload = () => {
+                console.log('Font loaded via link:', fontFamily);
+                resolve();
+              };
+              
+              link.onerror = () => {
+                console.warn('Failed to load font via link:', fontFamily);
+                resolve(); // Resolve anyway to prevent blocking
+              };
+            } else {
+              // Link already exists, consider it loaded
+              resolve();
             }
-          });
-        } else {
-          // Fallback: add a link element to load the font
-          const linkId = `font-link-${fontFamily.replace(/\s+/g, '-').toLowerCase()}`;
-          let link = document.getElementById(linkId);
-          
-          if (!link) {
-            link = document.createElement('link');
-            link.id = linkId;
-            link.rel = 'stylesheet';
-            document.head.appendChild(link);
           }
-          
-          link.href = `https://fonts.googleapis.com/css2?family=${fontURL}&display=swap`;
-        }
+        });
       } catch (error) {
         console.error('Error loading font:', error);
+        // Return resolved promise to prevent blocking
+        return Promise.resolve();
       }
-    },
-    
+    };
+
+    // Open the font selection panel
+    const openPanel = async () => {
+      initFromModelValue();
+      searchTerm.value = '';
+      
+      // Show only top fonts initially instead of all fonts
+      fonts.value = getTopFonts();
+      
+      // First open the panel so the user sees something happening
+      panelOpen.value = true;
+      
+      // Then load the fonts in the background
+      setTimeout(async () => {
+        try {
+          await preloadListFonts();
+          
+          // Make sure current font is loaded
+          if (tempConfig.value && tempConfig.value.family) {
+            await loadFont(tempConfig.value.family);
+            updatePreviewStyle();
+          }
+        } catch (error) {
+          console.error('Error loading fonts:', error);
+        }
+      }, 100);
+    };
+
     // Search fonts based on input
-    searchFonts() {
-      if (this.searchTerm.length === 0) {
+    const searchFonts = () => {
+      if (searchTerm.value.length === 0) {
         // Show all fonts if search is empty
-        this.fonts = [...this.allFonts];
+        fonts.value = [...allFonts.value];
         return;
       }
       
       // Filter fonts based on search term
-      const searchLower = this.searchTerm.toLowerCase();
-      this.fonts = this.allFonts.filter(font =>
+      const searchLower = searchTerm.value.toLowerCase();
+      fonts.value = allFonts.value.filter(font =>
         font.family.toLowerCase().includes(searchLower)
       );
       
       // Preload search results
-      this.$nextTick(() => {
-        this.preloadListFonts();
+      nextTick(() => {
+        preloadListFonts();
       });
-    },
-    
+    };
+
     // Select a font from the list
-    selectFont(font) {
-      if (!font || !this.tempConfig) return;
+    const selectFont = async (font) => {
+      if (!font || !tempConfig.value) return;
       
       try {
         console.log(`Selecting font: ${font.family}`);
         
         // Update basic properties
-        this.tempConfig.family = font.family;
-        this.tempConfig.category = font.category;
+        tempConfig.value.family = font.family;
+        tempConfig.value.category = font.category;
         
         const fontInfo = FONTS[font.family];
         if (!fontInfo) {
@@ -667,12 +608,12 @@ export default {
         }
         
         console.log(`Font info for ${font.family}:`, 
-                   `variable: ${!!fontInfo.isVariable}`, 
-                   `axes: ${fontInfo.axes ? fontInfo.axes.length : 'none'}`,
-                   `weights: ${fontInfo.weights ? fontInfo.weights.join(',') : 'none'}`);
+               `variable: ${!!fontInfo.isVariable}`, 
+               `axes: ${fontInfo.axes ? fontInfo.axes.length : 'none'}`,
+               `weights: ${fontInfo.weights ? fontInfo.weights.join(',') : 'none'}`);
         
-        // IMPORTANT: Use a completely different approach to clear axes
-        this.tempConfig.axes = {};  // This works because tempConfig itself is reactive
+        // Reset axes
+        tempConfig.value.axes = {};
         
         // Handle variable font axes
         if (fontInfo.isVariable && Array.isArray(fontInfo.axes) && fontInfo.axes.length > 0) {
@@ -693,51 +634,49 @@ export default {
             
             if (axis.tag === 'wght') {
               // Special case for weight
-              const weight = Math.min(Math.max(this.tempConfig.weight, axis.start), axis.end);
-              this.tempConfig.weight = weight;
+              const weight = Math.min(Math.max(tempConfig.value.weight, axis.start), axis.end);
+              tempConfig.value.weight = weight;
+            } else if (axis.tag === 'opsz') {
+              // Special case for optical size - set to match font size
+              const opticalSize = Math.max(axis.start, Math.min(tempConfig.value.size, axis.end));
+              tempConfig.value.axes[axis.tag] = opticalSize;
             } else {
-              // Set other axes (works in Vue 3)
+              // Set other axes
               console.log(`Setting axis ${axis.tag} to ${defaultValue}`);
-              this.tempConfig.axes[axis.tag] = defaultValue;
-              
-              // Force Vue to recognize the change by making a computed property access
-              this.$nextTick(() => {
-                console.log(`Axis ${axis.tag} set to:`, this.tempConfig.axes[axis.tag]);
-              });
+              tempConfig.value.axes[axis.tag] = defaultValue;
             }
           }
         } else if (Array.isArray(fontInfo.weights) && fontInfo.weights.length > 0) {
           console.log(`Processing standard font weights for ${font.family}`);
           // For non-variable fonts, adjust to nearest available weight
           const weights = fontInfo.weights.map(w => parseInt(w));
-          this.tempConfig.weight = this.findClosestWeight(weights, this.tempConfig.weight);
+          tempConfig.value.weight = findClosestWeight(weights, tempConfig.value.weight);
         }
         
         // Load the font for preview
-        this.loadFont(font.family);
+        await loadFont(font.family);
         
-        // Force refresh of computed properties
-        this.$forceUpdate();
+        // Update preview
+        updatePreviewStyle();
       } catch (error) {
         console.error('Error in selectFont:', error);
       }
-    },
-    
+    };
+
     // Find closest available weight
-    findClosestWeight(weights, targetWeight) {
+    const findClosestWeight = (weights, targetWeight) => {
+      if (!weights || weights.length === 0) return 400;
       return weights.reduce((prev, curr) => 
         Math.abs(curr - targetWeight) < Math.abs(prev - targetWeight) ? curr : prev
       );
-    },
-    
+    };
+
     // Get weight step for non-variable fonts
-    getWeightStep() {
-      // If there are very few weights, use a larger step to snap to available weights
-      const weights = this.availableWeights.map(w => parseInt(w));
-      if (weights.length <= 1) return 100;
+    const getWeightStep = () => {
+      if (!availableWeights.value || availableWeights.value.length <= 1) return 100;
       
       // Sort weights in ascending order
-      weights.sort((a, b) => a - b);
+      const weights = [...availableWeights.value].map(w => parseInt(w)).sort((a, b) => a - b);
       
       // Calculate minimum difference between consecutive weights
       let minDiff = 100;
@@ -747,141 +686,120 @@ export default {
       }
       
       return minDiff;
-    },
-    
+    };
+
     // Apply the selection
-    applySelection() {
-      if (!this.tempConfig) return;
+    const applySelection = () => {
+      if (!tempConfig.value) return;
       
       // Create the result object
       const result = {
-        family: this.tempConfig.family,
-        category: this.tempConfig.category,
-        size: this.tempConfig.size,
-        weight: this.tempConfig.weight,
-        effect: this.tempConfig.effect
+        family: tempConfig.value.family,
+        category: tempConfig.value.category,
+        size: tempConfig.value.size,
+        weight: tempConfig.value.weight,
+        effect: tempConfig.value.effect
       };
       
       // Add axes if there are any
-      if (this.tempConfig.axes && Object.keys(this.tempConfig.axes).length > 0) {
-        result.axes = { ...this.tempConfig.axes };
+      if (tempConfig.value.axes && Object.keys(tempConfig.value.axes).length > 0) {
+        result.axes = { ...tempConfig.value.axes };
       }
       
       // Emit the updated model value
-      this.$emit('update:modelValue', result);
-      this.panelOpen = false;
-    },
-    
+      emit('update:modelValue', result);
+      panelOpen.value = false;
+    };
+
     // Cancel and close the panel
-    cancelSelection() {
-      if (!this.tempConfig) {
-        this.panelOpen = false;
+    const cancelSelection = () => {
+      if (!tempConfig.value) {
+        panelOpen.value = false;
         return;
       }
       
-      try {
-        // Update from originalConfig, property by property
-        this.tempConfig.family = this.originalConfig.family;
-        this.tempConfig.category = this.originalConfig.category;
-        this.tempConfig.size = this.originalConfig.size;
-        this.tempConfig.weight = this.originalConfig.weight;
-        this.tempConfig.effect = this.originalConfig.effect;
-        
-        // Reset axes by creating a new empty object
-        this.tempConfig.axes = {};
-        
-        // Copy axes from originalConfig
-        if (this.originalConfig.axes) {
-          Object.entries(this.originalConfig.axes).forEach(([key, value]) => {
-            this.tempConfig.axes[key] = value;
-          });
-        }
-        
-        this.panelOpen = false;
-      } catch (error) {
-        console.error('Error in cancelSelection:', error);
-        this.panelOpen = false;
-      }
-    },
-    
+      // Reset to original config
+      tempConfig.value = JSON.parse(JSON.stringify(originalConfig.value));
+      panelOpen.value = false;
+    };
+
     // Helper methods for style computation
-    getTextDecoration() {
-      if (!this.tempConfig) return 'none';
-      if (this.tempConfig.effect === 'underline') return 'underline';
-      if (this.tempConfig.effect === 'strikethrough') return 'line-through';
+    const getTextDecoration = () => {
+      if (!tempConfig.value) return 'none';
+      if (tempConfig.value.effect === 'underline') return 'underline';
+      if (tempConfig.value.effect === 'strikethrough') return 'line-through';
       return 'none';
-    },
-    
-    getTextShadow() {
-      if (!this.tempConfig) return 'none';
-      if (this.tempConfig.effect === 'shadow') return '1px 1px 2px rgba(0,0,0,0.3)';
-      if (this.tempConfig.effect === 'drop-shadow') return '2px 2px 4px rgba(0,0,0,0.5)';
+    };
+
+    const getTextShadow = () => {
+      if (!tempConfig.value) return 'none';
+      if (tempConfig.value.effect === 'shadow') return '1px 1px 2px rgba(0,0,0,0.3)';
+      if (tempConfig.value.effect === 'drop-shadow') return '2px 2px 4px rgba(0,0,0,0.5)';
       return 'none';
-    },
-    
+    };
+
     // Get the computed style for the preview text
-    getPreviewStyle() {
-      if (!this.tempConfig) return {};
+    const getPreviewStyle = () => {
+      if (!tempConfig.value) return {};
       
       // Start with basic style properties
       const style = {
-        fontFamily: `'${this.tempConfig.family}', ${this.tempConfig.category}`,
-        fontSize: `${this.tempConfig.size}pt`,
-        textTransform: this.tempConfig.effect === 'uppercase' ? 'uppercase' : 'none',
-        fontVariantCaps: this.tempConfig.effect === 'small-caps' ? 'small-caps' : 'normal',
-        textDecoration: this.getTextDecoration(),
-        textShadow: this.getTextShadow(),
-        backgroundColor: this.tempConfig.effect === 'highlight' ? 'rgba(255, 255, 0, 0.3)' : 'transparent'
+        fontFamily: `'${tempConfig.value.family}', ${tempConfig.value.category}`,
+        fontSize: `${tempConfig.value.size}pt`,
+        textTransform: tempConfig.value.effect === 'uppercase' ? 'uppercase' : 'none',
+        fontVariantCaps: tempConfig.value.effect === 'small-caps' ? 'small-caps' : 'normal',
+        textDecoration: getTextDecoration(),
+        textShadow: getTextShadow(),
+        backgroundColor: tempConfig.value.effect === 'highlight' ? 'rgba(255, 255, 0, 0.3)' : 'transparent'
       };
       
       // Apply font-weight from the tempConfig
-      style.fontWeight = this.tempConfig.weight;
+      style.fontWeight = tempConfig.value.weight;
       
       // Apply specific CSS properties for each axis if they exist in tempConfig.axes
-      if (this.tempConfig.axes) {
+      if (tempConfig.value.axes) {
         // Width (wdth) → font-stretch
-        if (this.tempConfig.axes.wdth !== undefined) {
+        if (tempConfig.value.axes.wdth !== undefined) {
           // font-stretch accepts percentage values
-          style.fontStretch = `${this.tempConfig.axes.wdth}%`;
+          style.fontStretch = `${tempConfig.value.axes.wdth}%`;
         }
         
         // Italic (ital) → font-style
-        if (this.tempConfig.axes.ital !== undefined) {
+        if (tempConfig.value.axes.ital !== undefined) {
           // ital is typically 0 to 1, where 1 is italic
-          style.fontStyle = this.tempConfig.axes.ital > 0.5 ? 'italic' : 'normal';
+          style.fontStyle = tempConfig.value.axes.ital > 0.5 ? 'italic' : 'normal';
         }
         
         // Slant (slnt) → font-style with oblique
-        if (this.tempConfig.axes.slnt !== undefined) {
+        if (tempConfig.value.axes.slnt !== undefined) {
           // slnt is typically negative for backwards slant
-          style.fontStyle = `oblique ${this.tempConfig.axes.slnt}deg`;
-        }
-        
-        // Optical size (opsz) → font-optical-sizing
-        if (this.tempConfig.axes.opsz !== undefined) {
-          style.fontOpticalSizing = 'auto'; // Enable optical sizing
-          // Some fonts might need a specific size set
-          style.fontSize = `${this.tempConfig.axes.opsz}pt`;
+          style.fontStyle = `oblique ${tempConfig.value.axes.slnt}deg`;
         }
       }
       
-      console.log('Applied style:', style);
+      // Add font-variation-settings if this is a variable font
+      if (selectedFontInfo.value && selectedFontInfo.value.isVariable) {
+        const variationSettings = getVariationSettings();
+        if (variationSettings) {
+          style.fontVariationSettings = variationSettings;
+        }
+      }
+      
       return style;
-    },
-    
+    };
+
     // Get CSS font-variation-settings string for variable fonts
-    getVariationSettings() {
+    const getVariationSettings = () => {
       try {
-        if (!this.tempConfig || !this.selectedFontInfo || !this.selectedFontInfo.isVariable) {
+        if (!tempConfig.value || !selectedFontInfo.value || !selectedFontInfo.value.isVariable) {
           return '';
         }
         
-        let settings = `"wght" ${this.tempConfig.weight}`;
+        let settings = `"wght" ${tempConfig.value.weight}`;
         
         // Safely access axes properties
-        if (this.tempConfig.axes) {
-          const axisEntries = Object.entries(this.tempConfig.axes);
-          console.log('Current axes values:', this.tempConfig.axes);
+        if (tempConfig.value.axes) {
+          const axisEntries = Object.entries(tempConfig.value.axes);
           
           for (let i = 0; i < axisEntries.length; i++) {
             const [tag, value] = axisEntries[i];
@@ -891,69 +809,57 @@ export default {
           }
         }
         
-        // Make sure we also add axes from the font definition if they're not in tempConfig
-        if (this.selectedFontInfo.axes) {
-          for (const axis of this.selectedFontInfo.axes) {
-            if (axis.tag !== 'wght' && (!this.tempConfig.axes[axis.tag])) {
-              const defaultValue = Math.round((axis.start + axis.end) / 2);
-              settings += `, "${axis.tag}" ${defaultValue}`;
-              
-              // Add it to tempConfig.axes for future use
-              this.tempConfig.axes[axis.tag] = defaultValue;
-            }
-          }
-        }
-        
-        console.log('Font variation settings:', settings);
         return settings;
       } catch (error) {
         console.error('Error in getVariationSettings:', error);
         return '';
       }
-    },
-    
+    };
+
     // Get variation settings from a config object
-    getVariationSettingsFromConfig(config) {
+    const getVariationSettingsFromConfig = (config) => {
       if (!config || !config.family) return '';
       
       const fontInfo = FONTS[config.family];
       if (!fontInfo || !fontInfo.isVariable) return '';
       
-      let settings = `"wght" ${config.weight}`;
+      let settings = `"wght" ${config.weight || 400}`;
       
       // Add other axes
       if (config.axes) {
         for (const [tag, value] of Object.entries(config.axes)) {
-          settings += `, "${tag}" ${value}`;
+          if (tag !== 'wght') { // Skip wght as it's already included
+            settings += `, "${tag}" ${value}`;
+          }
         }
       }
       
       return settings;
-    },
-    
+    };
+
     // Get the minimum value for an axis
-    getAxisMin(tag) {
-      if (!this.selectedFontInfo || !this.selectedFontInfo.isVariable || !this.selectedFontInfo.axes) {
+    const getAxisMin = (tag) => {
+      if (!selectedFontInfo.value || !selectedFontInfo.value.isVariable || !selectedFontInfo.value.axes) {
         return tag === 'wght' ? 400 : 0;
       }
       
-      const axis = this.selectedFontInfo.axes.find(a => a.tag === tag);
+      const axis = selectedFontInfo.value.axes.find(a => a.tag === tag);
       return axis ? axis.start : (tag === 'wght' ? 400 : 0);
-    },
-    
+    };
+
     // Get the maximum value for an axis
-    getAxisMax(tag) {
-      if (!this.selectedFontInfo || !this.selectedFontInfo.isVariable || !this.selectedFontInfo.axes) {
+    const getAxisMax = (tag) => {
+      if (!selectedFontInfo.value || !selectedFontInfo.value.isVariable || !selectedFontInfo.value.axes) {
         return tag === 'wght' ? 700 : 100;
       }
       
-      const axis = this.selectedFontInfo.axes.find(a => a.tag === tag);
+      const axis = selectedFontInfo.value.axes.find(a => a.tag === tag);
       return axis ? axis.end : (tag === 'wght' ? 700 : 100);
-    },
-    
+    };
+
     // Update axis value with manual event handling
-    updateAxisValue(tag, value) {
-      if (!this.tempConfig || !this.tempConfig.axes) return;
+    const updateAxisValue = (tag, value) => {
+      if (!tempConfig.value || !tempConfig.value.axes) return;
       
       // Convert to number
       const numValue = parseFloat(value);
@@ -961,44 +867,14 @@ export default {
       console.log(`Updating axis ${tag} to ${numValue}`);
       
       // Set the value
-      this.tempConfig.axes[tag] = numValue;
+      tempConfig.value.axes[tag] = numValue;
       
-      // Update the preview style immediately
-      this.$nextTick(() => {
-        if (this.$refs.previewText) {
-          const style = this.getPreviewStyle();
-          Object.entries(style).forEach(([prop, value]) => {
-            this.$refs.previewText.style[prop] = value;
-          });
-          
-          // Also update font-variation-settings if applicable
-          if (this.selectedFontInfo && this.selectedFontInfo.isVariable) {
-            const variationSettings = this.getVariationSettings();
-            if (variationSettings) {
-              this.$refs.previewText.style.fontVariationSettings = variationSettings;
-            }
-          }
-        }
-        
-        this.$forceUpdate();
-      });
-    },
-    
-    // Get a human-readable label for an axis
-    getAxisLabel(tag) {
-      const axisLabels = {
-        'wght': 'Weight',
-        'wdth': 'Width',
-        'slnt': 'Slant',
-        'ital': 'Italic',
-        'opsz': 'Optical Size'
-      };
-      
-      return axisLabels[tag] || tag.toUpperCase();
-    },
-    
+      // Update the preview immediately
+      updatePreviewStyle();
+    };
+
     // Get a weight label for any weight value (including non-standard weights)
-    approximateWeightLabel(weight) {
+    const approximateWeightLabel = (weight) => {
       if (typeof weight !== 'number') return 'Regular';
       
       // Find the closest standard weight
@@ -1007,11 +883,11 @@ export default {
         Math.abs(curr - weight) < Math.abs(prev - weight) ? curr : prev
       );
       
-      return this.weightLabels[closestWeight] || `Weight ${weight}`;
-    },
-    
+      return weightLabels[closestWeight] || `Weight ${weight}`;
+    };
+
     // Get a good preview weight for a font in the list
-    getFontPreviewWeight(font) {
+    const getFontPreviewWeight = (font) => {
       const fontInfo = FONTS[font.family];
       if (!fontInfo) return 400;
       
@@ -1026,19 +902,124 @@ export default {
       // For non-variable fonts, use the available weights
       const weights = fontInfo.weights;
       if (weights && weights.length) {
-        // Prefer regular (400) if available, otherwise medium (500) or bold (700)
         if (weights.includes('400')) return 400;
         if (weights.includes('500')) return 500;
         if (weights.includes('700')) return 700;
-        
-        // Otherwise use the middle weight
         return parseInt(weights[Math.floor(weights.length / 2)]);
       }
       
       return 400; // Default
-    }
+    };
+
+    // Update the preview style immediately
+    const updatePreviewStyle = () => {
+      nextTick(() => {
+        if (previewText.value) {
+          const style = getPreviewStyle();
+          Object.entries(style).forEach(([prop, value]) => {
+            previewText.value.style[prop] = value;
+          });
+        }
+      });
+    };
+
+    // Get optical size axis if available
+    const opticalSizeAxis = computed(() => {
+      if (!selectedFontInfo.value || !selectedFontInfo.value.isVariable || !selectedFontInfo.value.axes) {
+        return null;
+      }
+      
+      return selectedFontInfo.value.axes.find(axis => axis.tag === 'opsz');
+    });
+
+    // Update display mode and position
+    const updateDisplayMode = (newMode) => {
+      displayMode.value = newMode;
+    };
+
+    const updatePanelPosition = (newPosition) => {
+      panelPosition.value = newPosition;
+    };
+
+    // Watch for model changes
+    watch(() => props.modelValue, (newValue) => {
+      // Only update if panel is closed to avoid breaking the editing session
+      if (!panelOpen.value && newValue) {
+        initFromModelValue();
+      }
+    }, { deep: true });
+
+    // Initialize on mount
+    onMounted(() => {
+      // Initialize data
+      initData();
+      initFromModelValue();
+      
+      // Load WebFont if not already available
+      if (typeof window.WebFont === 'undefined') {
+        const wf = document.createElement('script');
+        wf.src = 'https://ajax.googleapis.com/ajax/libs/webfont/1.6.26/webfont.js';
+        wf.async = true;
+        document.head.appendChild(wf);
+        
+        wf.onload = () => {
+          console.log('WebFont loader loaded');
+          // Load initial font
+          if (fontConfig.value && fontConfig.value.family) {
+            loadFont(fontConfig.value.family).then(() => {
+              console.log('Initial font loaded');
+            });
+          }
+        };
+      } else if (fontConfig.value && fontConfig.value.family) {
+        // WebFont already available, load initial font
+        loadFont(fontConfig.value.family).then(() => {
+          console.log('Initial font loaded');
+        });
+      }
+    });
+
+    return {
+      // Refs
+      fontConfig,
+      panelOpen,
+      displayMode,
+      panelPosition,
+      panelSize,
+      searchTerm,
+      fonts,
+      tempConfig,
+      originalConfig,
+      fontInputContainer,
+      fontPreview,
+      previewText,
+      
+      // Computed
+      selectedFontInfo,
+      availableWeights,
+      additionalAxes,
+      displayFontName,
+      previewStyle,
+      safeWeightLabel,
+      opticalSizeAxis,
+      
+      // Methods
+      openPanel,
+      searchFonts,
+      selectFont,
+      applySelection,
+      cancelSelection,
+      getPreviewStyle,
+      getAxisMin,
+      getAxisMax,
+      updateAxisValue,
+      getFontPreviewWeight,
+      getWeightStep,
+      updateDisplayMode,
+      updatePanelPosition
+    };
   }
-};
+}
 </script>
 
 <style scoped>
@@ -1102,6 +1083,7 @@ export default {
   display: flex;
   flex-direction: column;
   gap: 16px;
+  height: 100%;
 }
 
 /* Search Box */
@@ -1215,10 +1197,8 @@ export default {
 /* Font List */
 .font-list-container {
   flex: 1;
-  min-height: 150px;
-  max-height: 250px;
-  border: 1px solid #ddd;
-  border-radius: 4px;
+  min-height: 100px;
+  /* Removed max-height to allow flexible sizing */
   overflow-y: auto;
 }
 

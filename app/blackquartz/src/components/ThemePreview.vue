@@ -1,5 +1,5 @@
 <template>
-    <div class="preview" :class="{'responsive-mode': theme.responsivePreview.enabled}">
+    <div class="preview" :class="{'responsive-mode': theme.responsivePreview ? theme.responsivePreview.enabled : false}">
       <div class="device-wrapper" v-if="theme.responsivePreview.enabled" :class="'device-' + theme.responsivePreview.device">
         <iframe ref="previewFrame"></iframe>
       </div>
@@ -20,11 +20,15 @@
     },
     methods: {
       updatePreview(cssCode, htmlContent) {
-        const frame = this.$refs.previewFrame;
-        const doc = frame.contentDocument || frame.contentWindow.document;
+        const iframe = this.$refs.previewFrame;
+        if (!iframe || !iframe.contentDocument) {
+          console.warn('Preview iframe not ready.');
+          return;
+        }
   
-        doc.open();
-        doc.write(`
+        const iframeDoc = iframe.contentDocument;
+        iframeDoc.open();
+        iframeDoc.write(`
           <!DOCTYPE html>
           <html>
           <head>
@@ -38,7 +42,7 @@
           </body>
           </html>
         `);
-        doc.close();
+        iframeDoc.close();
       }
     }
   };

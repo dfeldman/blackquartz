@@ -6,33 +6,33 @@
     <div class="control-content" v-show="!collapsed">
       <div class="tabs">
         <div 
-          :class="['tab', content.source === 'lorem' ? 'active' : '']" 
+          :class="['tab', localContent.source === 'lorem' ? 'active' : '']" 
           @click="setContentSource('lorem')"
         >Lorem Ipsum</div>
         <div 
-          :class="['tab', content.source === 'wiki' ? 'active' : '']" 
+          :class="['tab', localContent.source === 'wiki' ? 'active' : '']" 
           @click="setContentSource('wiki')"
         >Wikipedia</div>
       </div>
       
-      <div v-if="content.source === 'lorem'">
+      <div v-if="localContent.source === 'lorem'">
         <slider-input 
           label="Paragraphs" 
-          v-model="content.loremParagraphs" 
+          v-model="localContent.loremParagraphs" 
           :min="3" 
           :max="15"
         ></slider-input>
         
         <slider-input 
           label="Images" 
-          v-model="content.loremImages" 
+          v-model="localContent.loremImages" 
           :min="2" 
           :max="8"
         ></slider-input>
         
         <slider-input 
           label="Headings" 
-          v-model="content.loremHeadings" 
+          v-model="localContent.loremHeadings" 
           :min="2" 
           :max="6"
         ></slider-input>
@@ -40,7 +40,7 @@
         <button @click="$emit('generate-lorem')">Regenerate Lorem Text</button>
       </div>
       
-      <div v-if="content.source === 'wiki'">
+      <div v-if="localContent.source === 'wiki'">
         <label>Search Wikipedia</label>
         <div class="font-search">
           <i class="fas fa-search"></i>
@@ -92,22 +92,31 @@ export default {
     SliderInput
   },
   props: {
-    content: { type: Object, required: true },
+    content: { type: String, required: true },
     wikiState: { type: Object, required: true }
   },
-  emits: ['generate-lorem', 'search-wiki', 'select-wiki', 'fetch-wiki'],
+  emits: ['generate-lorem', 'search-wiki', 'select-wiki', 'fetch-wiki', 'update:content'],
   data() {
     return {
       collapsed: false,
-      wikiSearch: ''
+      wikiSearch: '',
+      localContent: this.content
     };
+  },
+  watch: {
+    content(newVal) {
+      this.localContent = newVal;
+    },
+    localContent(newVal) {
+      this.$emit('update:content', newVal);
+    }
   },
   methods: {
     toggleCollapsed() {
       this.collapsed = !this.collapsed;
     },
     setContentSource(source) {
-      this.content.source = source;
+      this.localContent.source = source;
     },
     onWikiSearchInput() {
       // Debounced wiki search
@@ -115,6 +124,9 @@ export default {
     },
     onWikiResultClick(result) {
       this.$emit('select-wiki', result);
+    },
+    updateContent(newValue) {
+      this.localContent = newValue;
     }
   }
 };

@@ -732,23 +732,22 @@ export default {
           const defaultValue = Math.round((axis.start + axis.end) / 2);
           
           // Special case for weight - use the current weight if within range
-          // if (axis.tag === 'wght') {
-          //   const weight = Math.min(Math.max(this.tempConfig.weight, axis.start), axis.end);
-          //   this.tempConfig.weight = weight;
-          // }
-          // } else {
-          //   // Initialize all other axes with their default values
-          //   if (!this.tempConfig.axes) this.tempConfig.axes = {};
-          //   this.tempConfig.axes[axis.tag] = defaultValue;
-          // }
+          if (axis.tag === 'wght') {
+            const weight = Math.min(Math.max(this.tempConfig.weight, axis.start), axis.end);
+            this.tempConfig.weight = weight;
+          } else {
+            // Initialize all other axes with their default values
+            if (!this.tempConfig.axes) this.tempConfig.axes = {};
+            this.tempConfig.axes[axis.tag] = defaultValue;
+          }
         });
       } else if (fontInfo) {
-        // // For non-variable fonts, adjust to nearest available weight
-        // const weights = fontInfo.weights.map(w => parseInt(w));
-        // if (weights.length > 0) {
-        //   // Find closest available weight
-        //   this.tempConfig.weight = this.findClosestWeight(weights, this.tempConfig.weight);
-        // }
+        // For non-variable fonts, adjust to nearest available weight
+        const weights = fontInfo.weights.map(w => parseInt(w));
+        if (weights.length > 0) {
+          // Find closest available weight
+          this.tempConfig.weight = this.findClosestWeight(weights, this.tempConfig.weight);
+        }
       }
       
       // Load the font for preview
